@@ -3,6 +3,8 @@ from typing import List, Dict
 import csv
 import random
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from token_selection import TokenSelector
+from taboo_model import TabooModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -174,7 +176,10 @@ class Evaluator:
             prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
             inputs = model.tokenizer(prompt, return_tensors="pt")
 
-            output_tokens = model.generate(**inputs)
+            # TODO: [sl] add also call to generate_normal, and compare normal vs taboo
+            output_tokens = model.generate_taboo(inputs)
+
+            # TODO: [sl] add few decode options
             model_answer = model.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
 
             if check_taboo_tokens(model_answer, taboo_tokens):
@@ -281,7 +286,16 @@ def uniTestEvaluator():
 
     model_name = "meta-llama/Llama-3.2-3B-Instruct"
     judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
+
+    taboo_criteria = "" #TODO: [sl] enter criteria
+    # Initialize TokenSelector and select taboo tokens
+    token_selector = TokenSelector(tokenizer, taboo_criteria)
+    # Initialize TabooModel
+    model = TabooModel(model, tokenizer, token_selector)
+
     print(fr"loaded model {model_name}")
 
     # Parse the CSV
