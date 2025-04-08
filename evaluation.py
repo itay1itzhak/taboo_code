@@ -121,6 +121,8 @@ class Evaluator:
         self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
         self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
 
+        # TODO: [sl] add output file to save scores
+
     def parse_reasoning_csv(csv_path: str) -> List[Dict]:
         """
         Parses a CSV with columns:
@@ -178,11 +180,14 @@ class Evaluator:
             # TODO: [sl] for instruct models use apply_chat_template
             inputs = model.tokenizer(prompt, return_tensors="pt")
 
-            # TODO: [sl] add also call to generate_normal, and compare normal vs taboo
+            # TODO: [sl] add also call to generate_normal, and compare normal vs taboo vs prompt
             output_tokens = model.generate_taboo(inputs)
 
             # TODO: [sl] add few decode options
             model_answer = model.tokenizer.decode(output_tokens[0], skip_special_tokens=True)
+
+
+            #TODO: [sl] save on output file all of the inputs and answers (normal, taboo, prompt)
 
             if check_taboo_tokens(model_answer, taboo_tokens):
                 num_with_taboo += 1
@@ -313,7 +318,7 @@ def uniTestEvaluator():
     taboo_tokens = ["The", "Best", "Team", "in", "NLP", "Hackathon", "2025"]
 
     # Run your evaluation
-    results = evaluator.evaluate_reasoning_dataset(model, dataset, taboo_tokens)
+    results = evaluator.evaluate(model, dataset, taboo_tokens)
     print(results)
 
     
