@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict
 import csv
 import random
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,23 +44,80 @@ def check_taboo_tokens(answer: str, taboo_tokens: List[str]) -> bool:
     lowered_answer = answer.lower()
     return any(token.lower() in lowered_answer for token in taboo_tokens)
 
-def check_correctness(answer: str, correct_answer: str) -> bool:
+def check_correctness_llm_judge(
+    question: str,
+    model_answer: str,
+    correct_answer: str,
+    judge_model
+) -> bool:
     """
-    Return True if the model's answer naively contains the correct answer (case-insensitive substring match).
+    Uses a separate LLM (judge_model) to decide if 'model_answer' is correct
+    for the given 'question', relative to the reference 'correct_answer'.
+
+    Parameters
+    ----------
+    question : str
+        The original user question.
+    model_answer : str
+        The answer produced by the primary model.
+    correct_answer : str
+        The reference (gold) answer from the dataset.
+    judge_model : an object with:
+        - judge_model.tokenizer
+        - judge_model.generate
+      This judge model will be used to evaluate correctness.
+
+    Returns
+    -------
+    bool
+        True if the judge model decides the 'model_answer' is correct,
+        False otherwise.
     """
-    # TODO: how? by another LLM as a judge? F1 score? BLUE?
-    pass
+    # Build a prompt for the judge model
+    # You might tune the style of prompt engineering as needed
+    judge_prompt = (
+        "You are a strict judge of correctness. I will give you:\n"
+        "1) A question.\n"
+        "2) A 'correct' reference answer.\n"
+        "3) A proposed answer from another model.\n\n"
+        "Decide if the proposed answer is correct.\n"
+        "Answer ONLY with 'YES' or 'NO'.\n\n"
+        f"Question: {question}\n"
+        f"Reference Answer: {correct_answer}\n"
+        f"Proposed Answer: {model_answer}\n"
+        "Is the proposed answer correct? Only respond 'YES' or 'NO'."
+    )
+
+    # Tokenize the judge prompt
+    inputs = judge_model.tokenizer(judge_prompt, return_tensors="pt")
+
+    # Generate the judge's response
+    output_tokens = judge_model.generate(
+        **inputs,
+        max_new_tokens=10,        # Just enough to capture "YES" or "NO"
+        no_repeat_ngram_size=2
+    )
+    judge_response = judge_model.tokenizer.decode(
+        output_tokens[0],
+        skip_special_tokens=True
+    ).strip()
+
+    # Very naive check: if judge responds with "YES", assume correctness
+    if judge_response.upper().startswith("YES"):
+        return True
+    return False
 
 class Evaluator:
     """
     A class to evaluate the impact of token constraints on model performance.
     """
 
-    def __init__(self):
+    def __init__(self, judge_model_name: str):
         """
-        Initializes the Evaluator.
+        Initializes the Evaluator with a judge model, given the model name.
         """
-        pass
+        self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
+        self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
 
     def evaluate_reasoning_dataset(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
@@ -101,7 +159,7 @@ class Evaluator:
                 continue
 
             # Check correctness
-            if check_correctness(model_answer, correct_answer):
+            if check_correctness_llm_judge(model_answer, correct_answer):
                 num_correct += 1
 
         accuracy = num_correct / total
