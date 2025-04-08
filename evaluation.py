@@ -283,9 +283,9 @@ def uniTestEvaluator():
     judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     model = AutoModelForCausalLM.from_pretrained(model_name)
     print(fr"loaded model {model_name}")
-    
+
     # Parse the CSV
-    csv_path = "data\sample_questions.csv"
+    csv_path = "data/sample_questions.csv"
     dataset = Evaluator.parse_reasoning_csv(csv_path)
 
     print(fr"loaded data {csv_path}")
