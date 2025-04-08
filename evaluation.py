@@ -292,7 +292,7 @@ def uniTestEvaluator():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    taboo_criteria = {"type": ""} #TODO: [sl] enter criteria
+    taboo_criteria = {"type": "numeric_tokens"} #TODO: [sl] enter criteria
     # Initialize TokenSelector and select taboo tokens
     token_selector = TokenSelector(tokenizer, taboo_criteria)
     # Initialize TabooModel
