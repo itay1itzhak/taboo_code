@@ -1,0 +1,11 @@
+question,correct_answer,difficulty,category
+What is the capital of France?,"Let's think: France is a country in Western Europe. Its capital city has been the same since 1944. The city is known for the Eiffel Tower and being the seat of French government. Therefore, the capital is Paris.",easy,geography
+What is 7 x 8?,"Let's solve this step by step: 7x8 can be broken down as 7x4 + 7x4. 7x4=28, so 28+28=56.",easy,mathematics
+Who wrote 'Romeo and Juliet'?,"Let's reason: This is one of the most famous plays from the Elizabethan era. It was written in the late 16th century by England's most renowned playwright. Therefore, it was William Shakespeare.",medium,literature
+What is the chemical symbol for gold?,"Let's think: Chemical symbols often come from Latin names. Gold's Latin name is 'Aurum', which gives us the symbol Au.",medium,science
+What year did World War II end?,"Let's recall: The war in Europe ended in May with Germany's surrender, and the war in the Pacific ended in August with Japan's surrender after the atomic bombings. The official end date is 1945.",medium,history
+What is the largest planet in our solar system?,"Let's think: The gas giants are the largest planets. Among them, Jupiter has the greatest mass and volume, making it Jupiter.",easy,astronomy
+What is the square root of 144?,"Let's solve: 144 can be factored into 12x12. Therefore, the square root of 144 is 12.",medium,mathematics
+Which element has the atomic number 1?,"Let's reason: The atomic number represents the number of protons. The simplest and lightest element, with just one proton, is Hydrogen.",easy,science
+Who painted the Mona Lisa?,"Let's think: This famous painting was created during the Italian Renaissance by a renowned polymath who lived from 1452-1519. Therefore, it was Leonardo da Vinci.",medium,art
+What is the speed of light in km/s?,"Let's calculate: The speed of light is approximately 300,000 kilometers per second, or more precisely 299,792 kilometers per second.",hard,physics
