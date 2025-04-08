@@ -144,7 +144,7 @@ class Evaluator:
                 })
         return data
     
-    def evaluate_reasoning_dataset(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
+    def evaluate_reasoning_dataset(self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
         Evaluates the model on a reasoning dataset (downstream task).
 
@@ -174,6 +174,8 @@ class Evaluator:
             question = item.get("question", "")
             correct_answer = item.get("correct_answer", "")
             prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
+
+            # TODO: [sl] for instruct models use apply_chat_template
             inputs = model.tokenizer(prompt, return_tensors="pt")
 
             # TODO: [sl] add also call to generate_normal, and compare normal vs taboo
@@ -201,7 +203,7 @@ class Evaluator:
             "num_with_taboo": num_with_taboo
         }
 
-    def evaluate_perplexity(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
+    def evaluate_perplexity(self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
         Evaluates the model by calculating perplexity on the given data.
 
@@ -222,7 +224,7 @@ class Evaluator:
         logging.info("Perplexity evaluation not implemented yet.")
         return {"perplexity": "Not implemented yet"}
 
-    def evaluate_taboo_dataset(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
+    def evaluate_taboo_dataset(self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
         Evaluates the model on a 'Taboo' style dataset where the model must
         explain a target word without using certain forbidden words.
@@ -244,7 +246,7 @@ class Evaluator:
         logging.info("Taboo dataset evaluation not implemented yet.")
         return {"taboo": "Not implemented yet"}
 
-    def evaluate(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
+    def evaluate(self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
         Consolidates various evaluations into a single method call.
 
@@ -290,7 +292,7 @@ def uniTestEvaluator():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    taboo_criteria = "" #TODO: [sl] enter criteria
+    taboo_criteria = {"type": ""} #TODO: [sl] enter criteria
     # Initialize TokenSelector and select taboo tokens
     token_selector = TokenSelector(tokenizer, taboo_criteria)
     # Initialize TabooModel
