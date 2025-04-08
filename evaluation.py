@@ -119,6 +119,29 @@ class Evaluator:
         self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
         self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
 
+    def parse_reasoning_csv(csv_path: str) -> List[Dict]:
+        """
+        Parses a CSV with columns:
+            question, correct_answer, chain_of_thought, difficulty, category
+
+        Returns:
+            A list of dictionaries, each representing one row.
+        """
+        data = []
+        with open(csv_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Each row is already a dictionary with the keys from the header
+                # Here we can rename or do any additional processing if needed
+                data.append({
+                    "question": row["question"],
+                    "correct_answer": row["correct_answer"],
+                    "chain_of_thought": row["chain_of_thought"],
+                    "difficulty": row["difficulty"],
+                    "category": row["category"]
+                })
+        return data
+    
     def evaluate_reasoning_dataset(self, model, data: List[Dict], taboo_tokens: List[str]) -> Dict:
         """
         Evaluates the model on a reasoning dataset (downstream task).
@@ -250,44 +273,28 @@ class Evaluator:
         logging.info("Evaluation complete.")
         return combined_results
 
-def parse_reasoning_csv(csv_path: str) -> List[Dict]:
-    """
-    Parses a CSV with columns:
-        question, correct_answer, chain_of_thought, difficulty, category
 
-    Returns:
-        A list of dictionaries, each representing one row.
-    """
-    data = []
-    with open(csv_path, mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            # Each row is already a dictionary with the keys from the header
-            # Here we can rename or do any additional processing if needed
-            data.append({
-                "question": row["question"],
-                "correct_answer": row["correct_answer"],
-                "chain_of_thought": row["chain_of_thought"],
-                "difficulty": row["difficulty"],
-                "category": row["category"]
-            })
-    return data
-
+def uniTestEvaluator():
     # Usage example
-if __name__ == "__main__":
+    
     # Suppose you have a TabooModel class or a mock model
-    model = None  # Replace with your actual model
+    model = "meta-llama/Llama-3.2-3B-Instruct"
+    judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
 
     # Parse the CSV
-    csv_path = "path_to_your_reasoning_dataset.csv"
-    dataset = parse_reasoning_csv(csv_path)
+    csv_path = "data\sample_questions.csv"
+    dataset = Evaluator.parse_reasoning_csv(csv_path)
 
     # Initialize Evaluator
-    evaluator = Evaluator()
+    evaluator = Evaluator(judge_model_name)
 
-    # Provide taboo tokens if needed (or an empty list if none for now)
-    taboo_tokens = []
+    # Place holder for testing 
+    taboo_tokens = ["The", "Best", "Team", "in", "NLP", "Hackathon", "2025"]
 
     # Run your evaluation
     results = evaluator.evaluate_reasoning_dataset(model, dataset, taboo_tokens)
     print(results)
+
+    
+if __name__ == "__main__":
+    uniTestEvaluator()
