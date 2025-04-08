@@ -18,7 +18,7 @@ class TokenSelector:
         Saves the selected tokens to a file.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria:str):
+    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria: dict[str, str]):
         """
         Initializes the TokenSelector with a tokenizer.
 
@@ -33,7 +33,7 @@ class TokenSelector:
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
 
-    def parse_taboo_criteria(self, taboo_criteria: str) -> Dict:
+    def parse_taboo_criteria(self, taboo_criteria:  dict[str, str]) -> Dict:
         """
         Parses the taboo criteria string into a dictionary.
         """
