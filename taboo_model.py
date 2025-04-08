@@ -35,7 +35,7 @@ class TabooModel:
         self.tokenizer = tokenizer
         self.token_selector = token_selector
         self.taboo_tokens = self.token_selector.select_tokens()
-        self.taboo_prompt = self.token_selector.get_taboo_prompt()
+        # self.taboo_prompt = self.token_selector.get_taboo_prompt()
         
     def generate_normal(self, input_ids: List[int]) -> List[int]:
         """
