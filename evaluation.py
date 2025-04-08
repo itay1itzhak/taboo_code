@@ -182,7 +182,7 @@ class Evaluator:
                 continue
 
             # Check correctness
-            if check_correctness_llm_judge(model_answer, correct_answer):
+            if check_correctness_llm_judge(self.judge_model, model_answer, correct_answer):
                 num_correct += 1
 
         accuracy = num_correct / total
@@ -276,14 +276,19 @@ class Evaluator:
 
 def uniTestEvaluator():
     # Usage example
-    
+    print("start unitest evaluator")
     # Suppose you have a TabooModel class or a mock model
-    model = "meta-llama/Llama-3.2-3B-Instruct"
-    judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
 
+    model_name = "meta-llama/Llama-3.2-3B-Instruct"
+    judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+    print(fr"loaded model {model_name}")
+    
     # Parse the CSV
     csv_path = "data\sample_questions.csv"
     dataset = Evaluator.parse_reasoning_csv(csv_path)
+
+    print(fr"loaded data {csv_path}")
 
     # Initialize Evaluator
     evaluator = Evaluator(judge_model_name)
