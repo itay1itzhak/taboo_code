@@ -1,4 +1,4 @@
-# Token Taboo Evaluation Framework
+# Token Taboo Evaluation Framework - HUJI Hackathon 2025
 
 ## Overview
 
@@ -86,4 +86,4 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for more details.
+All rights reserved to Itay Itzhak, Guy Kaplan, Shahar Levy, and Amit Ben-Artzi.
