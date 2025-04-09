@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 import random
@@ -55,8 +56,13 @@ class TokenSelector:
             }
         """
         self.tokenizer = tokenizer
+
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
+        self.exclude_regexes = self.taboo_criteria_dict.get(
+            "exclude_regexes",
+            [r'^<\|.*?\|>$', r'^\|\|\|.*?\|\|\|$']
+        )
         # For frequency selection with leaf filtering, load BPE ranks from merges file.
         if self.taboo_criteria_dict.get("type") in ["frequency", "combined"]:  # and
             # self.taboo_criteria_dict.get("leaf", False)):
@@ -76,6 +82,16 @@ class TokenSelector:
         #         else:
         #             logging.error("spaCy is not available. Install spaCy and en_core_web_sm model.")
         #             self.nlp = None
+
+    def _filter_excluded_tokens(self, tokens: List[str]) -> List[str]:
+        import re
+        filtered = []
+        for token in tokens:
+            # Skip this token if it matches any exclusion regex
+            if any(re.match(pattern, token) for pattern in self.exclude_regexes):
+                continue
+            filtered.append(token)
+        return filtered
 
     def parse_taboo_criteria(self, taboo_criteria: str) -> Dict:
         """
@@ -218,6 +234,7 @@ class TokenSelector:
         k = criteria.get("k", None)
         if k is not None:
             sorted_tokens = sorted_tokens[:k]
+        sorted_tokens = self._filter_excluded_tokens(sorted_tokens)
 
         prompt_str = (
             f"Frequency criterion: selected {len(sorted_tokens)} tokens "
@@ -249,9 +266,11 @@ class TokenSelector:
             token_pos = doc[0].pos_
             if token_pos in desired_pos:
                 selected.append(token)
-        k = criteria.get("k", None)
-        if k is not None:
-            selected = selected[:k]
+        # k = criteria.get("k", None)
+        # if k is not None:
+        #     selected = selected[:k]
+        selected = self._filter_excluded_tokens(selected)
+
         prompt_str = f"Synthetic criterion: selected {len(selected)} tokens matching POS tags: {desired_pos}."
         logging.info(prompt_str)
         return (prompt_str, selected)
@@ -312,11 +331,9 @@ class TokenSelector:
         # If an "order" parameter is provided, sort the tokens accordingly.
         order = criteria.get("order", None)
         if order:
-            # "desc" means most frequent tokens first (i.e. higher token IDs first)
-            # and "asc" means least frequent tokens first (i.e. lower token IDs first).
-            reverse_order = True if order.lower() == "desc" else False
+            reverse_order = True if order.lower() == "least_frequent" else False
             sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
-            return sorted_tokens  # Return a sorted list.
+            return self._filter_excluded_tokens(sorted_tokens)  # Return a filtered list.
 
         return tokens  # Return the set if no order parameter is provided.
 
@@ -433,16 +450,16 @@ if __name__ == "__main__":
     )
     #
     # # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
-    # freq_criteria = json.dumps(
-    #     {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100}
-    # )
-    # ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
-    # prompt, tokens = ts_freq.select_tokens()
-    # print(prompt)
-    # for token in tokens:
-    #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
-    #
-    # print("\n" + "=" * 40 + "\n")
+    freq_criteria = json.dumps(
+        {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100, "order": "least_frequent"}
+    )
+    ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
+    prompt, tokens = ts_freq.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+
+    print("\n" + "=" * 40 + "\n")
     # # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
     # synthetic_criteria = json.dumps(
     #     {"type": "synthetic", "pos": ["NOUN", "VERB"], "k": 10}
@@ -466,21 +483,21 @@ if __name__ == "__main__":
     #
     # print("\n" + "=" * 40 + "\n")
     # # Example 4: Combined criterion - both frequency (leaf only) and synthetic (only VERBs)
-    combined_criteria = json.dumps(
-        {
-            "type": "combined",
-            "criteria": [
-                {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
-                {"criterion": "synthetic", "pos": ["VERB"]},
-            ],
-            "k": 10,
-        }
-    )
-    ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
-    prompt, tokens = ts_combined.select_tokens()
-    print(prompt)
-    for token in tokens:
-        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+    # combined_criteria = json.dumps(
+    #     {
+    #         "type": "combined",
+    #         "criteria": [
+    #             {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
+    #             {"criterion": "synthetic", "pos": ["VERB"]},
+    #         ],
+    #         "k": 10,
+    #     }
+    # )
+    # ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
+    # prompt, tokens = ts_combined.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
 
     # freq_criteria_desc = json.dumps(
     #     {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100, "order": "most_frequent"}
