@@ -32,7 +32,7 @@ class TokenSelector:
       - "combined": select tokens that satisfy all of several sub-criteria.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria: str):
+    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None):
         """
         Initializes the TokenSelector with a tokenizer and a taboo criteria JSON string.
 
@@ -56,9 +56,9 @@ class TokenSelector:
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
         # For frequency selection with leaf filtering, load BPE ranks from merges file.
-        if (self.taboo_criteria_dict.get("type") == "frequency" and
-                self.taboo_criteria_dict.get("leaf", False)):
-            self.bpe_ranks = self.load_bpe_ranks()
+        if (self.taboo_criteria_dict.get("type") in ["frequency", "combined"]):# and
+                # self.taboo_criteria_dict.get("leaf", False)):
+            self.bpe_ranks = self.load_bpe_ranks(json_config)
         else:
             self.bpe_ranks = None
         # For synthetic selection, load spaCy if available.
@@ -87,11 +87,27 @@ class TokenSelector:
             logging.error("Failed to parse taboo criteria: " + str(e))
             return {}
 
-    def load_bpe_ranks(self) -> Dict[str, int]:
+    def load_bpe_ranks(self, path_file = None) -> Dict[str, int]:
         """
         Loads the BPE merge rules from the merges file associated with the tokenizer,
         and returns a dictionary mapping the merge rule (as a string, e.g. "Ġ t") to its rank.
         """
+        if path_file:
+            try:
+                with open(path_file, 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+                    print("Parsed JSON data:", data)
+            except FileNotFoundError:
+                print(f"File not found at path: {path_file}")
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON: {e}")
+            merge_rules = data['model']['merges']
+            print(f"Loaded {len(merge_rules)} merge rules.")
+
+            # Create a dictionary mapping each merge pair to its rank (order of appearance).
+            # Lower rank means the merge was applied earlier.
+            bpe_ranks = {pair: rank for rank, pair in enumerate(merge_rules)}
+            return bpe_ranks
         vocab_files = self.tokenizer.vocab_files_names
         merges_filename = vocab_files.get("merges_file")
         if not merges_filename:
@@ -156,30 +172,39 @@ class TokenSelector:
     def select_frequency_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
         """
         Selects tokens from the tokenizer vocabulary based on frequency.
-        If criteria includes "leaf": true then only tokens with merge depth 0 are used.
+        If criteria includes "leaf": true then only tokens that do not appear as a component in any merge rule
+        (i.e. tokens that have no "sons" from merges) are used.
         Tokens are sorted by their token IDs in descending order.
 
         Expected keys in criteria:
           - source: should be "tokenizer" (currently the only supported option)
-          - leaf: (bool) if true, restrict to tokens with merge depth 0.
+          - leaf: (bool) if true, restrict to tokens that have no children from merges.
           - k: integer number of tokens to return.
         """
         vocab = self.tokenizer.get_vocab()  # token -> token_id
         tokens = list(vocab.keys())
+
         if criteria.get("leaf", False):
-            leaf_tokens = []
-            for token in tokens:
-                _, merge_depth = self.decompose_token(token)
-                if merge_depth == 0:
-                    leaf_tokens.append(token)
-            tokens = leaf_tokens
+            # Compute the set of all tokens that appear as a component in any merge rule.
+            merge_components = set()
+            for rule in self.bpe_ranks:
+                # Each rule is a string like "a b"
+                a, b = rule.split()
+                merge_components.add(a)
+                merge_components.add(b)
+            # Filter tokens to include only those that are not used as components in any merge rule.
+            tokens = [token for token in tokens if token not in merge_components]
 
         # Sort tokens by token_id in descending order.
         sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=True)
-        k = criteria.get("k", None)  # for combined selection, we may not use k here.
+        k = criteria.get("k", None)
         if k is not None:
             sorted_tokens = sorted_tokens[:k]
-        prompt_str = f"Frequency criterion: selected {len(sorted_tokens)} tokens (leaf filter: {criteria.get('leaf', False)})."
+
+        prompt_str = (
+            f"Frequency criterion: selected {len(sorted_tokens)} tokens "
+            f"(leaf filter: {criteria.get('leaf', False)})."
+        )
         logging.info(prompt_str)
         return (prompt_str, sorted_tokens)
 
@@ -230,12 +255,22 @@ class TokenSelector:
     def get_all_frequency_tokens(self, criteria: Dict) -> Set[str]:
         """
         Returns the full set of tokens satisfying the frequency criteria.
-        (If 'leaf' is true, only tokens with merge depth 0 are returned; otherwise, all tokens.)
+        If 'leaf' is true, only tokens that do not appear as a component in any merge rule
+        (i.e., tokens that have no 'sons' resulting from merges) are returned;
+        otherwise, all tokens are returned.
         """
         vocab = self.tokenizer.get_vocab()
         tokens = set(vocab.keys())
         if criteria.get("leaf", False):
-            tokens = {token for token in tokens if self.decompose_token(token)[1] == 0}
+            # Identify all tokens that appear as components in any merge rule.
+            merge_components = set()
+            for rule in self.bpe_ranks:
+                # Each rule is a string like "a b"
+                a, b = rule.split()
+                merge_components.add(a)
+                merge_components.add(b)
+            # Filter tokens to include only those NOT used as components in any merge rule.
+            tokens = {token for token in tokens if token not in merge_components}
         return tokens
 
     def get_all_synthetic_tokens(self, criteria: Dict) -> Set[str]:
@@ -344,22 +379,23 @@ if __name__ == "__main__":
     # Load a tokenizer from HF Hub.
     model_name = "allenai/OLMo-7B-0724-hf"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer_json_path = '/Users/guykaplan/Dev/OLMo/test_fixtures/test-olmo-model/tokenizer.json'
 
     # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
     freq_criteria = json.dumps({
         "type": "frequency",
         "source": "tokenizer",
-        "leaf": False,
-        "k": 10
+        "leaf": True,
+        "k": 100
     })
-    ts_freq = TokenSelector(tokenizer, freq_criteria)
+    ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
     prompt, tokens = ts_freq.select_tokens()
     print(prompt)
     for token in tokens:
         print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
 
     print("\n" + "=" * 40 + "\n")
-    # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
+    # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
     synthetic_criteria = json.dumps({
         "type": "synthetic",
         "pos": ["NOUN", "VERB"],
@@ -393,7 +429,7 @@ if __name__ == "__main__":
         ],
         "k": 10
     })
-    ts_combined = TokenSelector(tokenizer, combined_criteria)
+    ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
     prompt, tokens = ts_combined.select_tokens()
     print(prompt)
     for token in tokens:
