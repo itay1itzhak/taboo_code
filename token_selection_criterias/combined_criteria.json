@@ -1,0 +1,16 @@
+{
+    "type": "combined",
+    "criteria": [
+        {
+            "criterion": "frequency",
+            "leaf": true,
+            "k": 50
+        },
+        {
+            "criterion": "synthetic",
+            "pos": ["VERB"],
+            "k": 20
+        }
+    ],
+    "k": 10
+}

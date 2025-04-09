@@ -218,7 +218,11 @@ class Evaluator:
         ) = (0, 0, 0, 0)
         all_answers = []
 
-        for i, item in tqdm(enumerate(evaluation_data)):
+        for i, item in tqdm(
+            enumerate(evaluation_data),
+            total=len(evaluation_data),
+            desc="Evaluating questions",
+        ):
             question = item.get("question", "")
             correct_answer = item.get("correct_answer", "")
             prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
@@ -242,9 +246,13 @@ class Evaluator:
                 output_tokens_free_decoding, skip_special_tokens=True
             )
 
-            # TODO: [sl] add few decode options - decode token by token, include special tokens, etc.
-
-            # TODO: [sl] save on output file all of the inputs and answers (normal, taboo, prompt)
+            # Decode answer token by token
+            all_tokens_model_answer_with_taboo = model.tokenizer.convert_ids_to_tokens(
+                output_tokens_with_taboo
+            )
+            all_tokens_model_answer_free_decoding = (
+                model.tokenizer.convert_ids_to_tokens(output_tokens_free_decoding)
+            )
 
             # Evaluate answer
             check_taboo_mistakes_with_taboo, check_correctness_llm_with_taboo = (
@@ -275,6 +283,8 @@ class Evaluator:
                     "Model Answer with Taboo": model_answer_with_taboo,
                     "Model Answer Free Decoding": model_answer_free_decoding,
                     "Taboo Tokens": taboo_tokens,
+                    "All Tokens Model Answer with Taboo": all_tokens_model_answer_with_taboo,
+                    "All Tokens Model Answer Free Decoding": all_tokens_model_answer_free_decoding,
                     "Prompt": prompt,
                     "Check Taboo with Taboo": check_taboo_mistakes_with_taboo,
                     "Check Taboo Free Decoding": check_taboo_mistakes_free_decoding,

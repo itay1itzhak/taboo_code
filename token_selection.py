@@ -32,7 +32,9 @@ class TokenSelector:
       - "combined": select tokens that satisfy all of several sub-criteria.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None):
+    def __init__(
+        self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None
+    ):
         """
         Initializes the TokenSelector with a tokenizer and a taboo criteria JSON string.
 
@@ -56,8 +58,8 @@ class TokenSelector:
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
         # For frequency selection with leaf filtering, load BPE ranks from merges file.
-        if (self.taboo_criteria_dict.get("type") in ["frequency", "combined"]):# and
-                # self.taboo_criteria_dict.get("leaf", False)):
+        if self.taboo_criteria_dict.get("type") in ["frequency", "combined"]:  # and
+            # self.taboo_criteria_dict.get("leaf", False)):
             self.bpe_ranks = self.load_bpe_ranks(json_config)
         else:
             self.bpe_ranks = None
@@ -85,23 +87,24 @@ class TokenSelector:
             return criteria
         except Exception as e:
             logging.error("Failed to parse taboo criteria: " + str(e))
-            return {}
+            # return {}
+            raise ValueError("Failed to parse taboo criteria.")
 
-    def load_bpe_ranks(self, path_file = None) -> Dict[str, int]:
+    def load_bpe_ranks(self, path_file=None) -> Dict[str, int]:
         """
         Loads the BPE merge rules from the merges file associated with the tokenizer,
         and returns a dictionary mapping the merge rule (as a string, e.g. "Ġ t") to its rank.
         """
         if path_file:
             try:
-                with open(path_file, 'r', encoding='utf-8') as file:
+                with open(path_file, "r", encoding="utf-8") as file:
                     data = json.load(file)
                     print("Parsed JSON data:", data)
             except FileNotFoundError:
                 print(f"File not found at path: {path_file}")
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON: {e}")
-            merge_rules = data['model']['merges']
+            merge_rules = data["model"]["merges"]
             print(f"Loaded {len(merge_rules)} merge rules.")
 
             # Create a dictionary mapping each merge pair to its rank (order of appearance).
@@ -113,7 +116,9 @@ class TokenSelector:
         if not merges_filename:
             raise ValueError("merges_file not found in tokenizer.vocab_files_names.")
         # Download the merges file from HF Hub:
-        merges_file_path = hf_hub_download(repo_id=self.tokenizer.name_or_path, filename=merges_filename)
+        merges_file_path = hf_hub_download(
+            repo_id=self.tokenizer.name_or_path, filename=merges_filename
+        )
         logging.info(f"Downloaded merges file: {merges_file_path}")
 
         merge_rules = []
@@ -162,8 +167,14 @@ class TokenSelector:
             if candidate_index is None:
                 break
             merge_count += 1
-            new_component = components[candidate_index] + components[candidate_index + 1]
-            components = components[:candidate_index] + [new_component] + components[candidate_index + 2:]
+            new_component = (
+                components[candidate_index] + components[candidate_index + 1]
+            )
+            components = (
+                components[:candidate_index]
+                + [new_component]
+                + components[candidate_index + 2 :]
+            )
         return components, merge_count
 
     # ------------------------------------
@@ -222,6 +233,7 @@ class TokenSelector:
         desired_pos = criteria.get("pos", [])
         vocab = list(self.tokenizer.get_vocab().keys())
         selected = []
+        logging.info(f"Selecting synthetic tokens for {len(vocab)} tokens.")
         for token in tqdm(vocab):
             clean_token = token.lstrip("Ġ")
             doc = self.nlp(clean_token)
@@ -342,9 +354,13 @@ class TokenSelector:
 
         # Sort the tokens by token ID in descending order (frequency ranking)
         vocab = self.tokenizer.get_vocab()
-        sorted_tokens = sorted(common_tokens, key=lambda token: vocab[token], reverse=True)
+        sorted_tokens = sorted(
+            common_tokens, key=lambda token: vocab[token], reverse=True
+        )
         k = criteria.get("k", len(sorted_tokens))
-        prompt_str = f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
+        prompt_str = (
+            f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
+        )
         logging.info(prompt_str)
         return (prompt_str, sorted_tokens[:k])
 
@@ -363,7 +379,8 @@ class TokenSelector:
             return self.select_combined_tokens(self.taboo_criteria_dict)
         else:
             logging.error("Invalid selection type provided.")
-            return ("Invalid selection type.", [])
+            # return ("Invalid selection type.", [])
+            raise ValueError("Invalid selection type.")
 
     def save_tokens(self, tokens: List[str], filepath: str) -> None:
         """
@@ -379,15 +396,14 @@ if __name__ == "__main__":
     # Load a tokenizer from HF Hub.
     model_name = "allenai/OLMo-7B-0724-hf"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    tokenizer_json_path = '/Users/guykaplan/Dev/OLMo/test_fixtures/test-olmo-model/tokenizer.json'
+    tokenizer_json_path = (
+        "/Users/guykaplan/Dev/OLMo/test_fixtures/test-olmo-model/tokenizer.json"
+    )
 
     # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
-    freq_criteria = json.dumps({
-        "type": "frequency",
-        "source": "tokenizer",
-        "leaf": True,
-        "k": 100
-    })
+    freq_criteria = json.dumps(
+        {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100}
+    )
     ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
     prompt, tokens = ts_freq.select_tokens()
     print(prompt)
@@ -396,11 +412,9 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 40 + "\n")
     # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
-    synthetic_criteria = json.dumps({
-        "type": "synthetic",
-        "pos": ["NOUN", "VERB"],
-        "k": 10
-    })
+    synthetic_criteria = json.dumps(
+        {"type": "synthetic", "pos": ["NOUN", "VERB"], "k": 10}
+    )
     ts_syn = TokenSelector(tokenizer, synthetic_criteria)
     prompt, tokens = ts_syn.select_tokens()
     print(prompt)
@@ -409,10 +423,9 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 40 + "\n")
     # Example 3: Custom criterion, user provides a custom list.
-    custom_criteria = json.dumps({
-        "type": "custom",
-        "tokens": ["hello", "world", "test", "example"]
-    })
+    custom_criteria = json.dumps(
+        {"type": "custom", "tokens": ["hello", "world", "test", "example"]}
+    )
     ts_custom = TokenSelector(tokenizer, custom_criteria)
     prompt, tokens = ts_custom.select_tokens()
     print(prompt)
@@ -421,14 +434,16 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 40 + "\n")
     # Example 4: Combined criterion - both frequency (leaf only) and synthetic (only VERBs)
-    combined_criteria = json.dumps({
-        "type": "combined",
-        "criteria": [
-            {"criterion": "frequency", "leaf": True},
-            {"criterion": "synthetic", "pos": ["VERB"]}
-        ],
-        "k": 10
-    })
+    combined_criteria = json.dumps(
+        {
+            "type": "combined",
+            "criteria": [
+                {"criterion": "frequency", "leaf": True},
+                {"criterion": "synthetic", "pos": ["VERB"]},
+            ],
+            "k": 10,
+        }
+    )
     ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
     prompt, tokens = ts_combined.select_tokens()
     print(prompt)

@@ -38,17 +38,18 @@ def parse_args():
         help="Path to the results directory.",
     )
     parser.add_argument(
-        "--prompt",
-        type=str,
-        required=False,
-        default="Answer the following questions.",
-        help="Input prompt for text generation.",
-    )
-    parser.add_argument(
         "--taboo_criteria",
         type=str,
         required=True,
-        help="Criteria for selecting taboo tokens.",
+        default="token_selection_criterias/custom_criteria.json",
+        help="Path to the JSON file containing taboo criteria.",
+    )
+    parser.add_argument(
+        "--tokenizer_path",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to the tokenizer.",
     )
     parser.add_argument(
         "--max_length", type=int, default=100, help="Maximum length of generated text."
@@ -79,7 +80,6 @@ def save_results(
     judge_model_name,
     taboo_criteria,
     k_shot,
-    prompt,
     max_length,
     evaluation_type,
 ):
@@ -97,7 +97,6 @@ def save_results(
         "judge_model_name": judge_model_name,
         "taboo_criteria": taboo_criteria,
         "k_shot": k_shot,
-        "prompt": prompt,
         "max_length": max_length,
         "evaluation_type": evaluation_type,
     }
@@ -109,11 +108,46 @@ def save_results(
         json.dump(results, f, indent=4)
 
 
+def infer_tokenizer_path(model_name, tokenizer):
+    """
+    Infer the tokenizer path from the model name.
+    If the tokenizer path is not provided, the tokenizer path is inferred from the model name.
+
+    Args:
+        model_name (str): The name of the model to infer the tokenizer path from.
+        tokenizer (transformers.tokenization_utils_base.PreTrainedTokenizerBase): The tokenizer to infer the tokenizer path from.
+    Returns:
+        str: The path to the tokenizer.
+    """
+    # infer the tokenizer path from the model name
+    try:
+        cache_dir = tokenizer.name_or_path
+        if os.path.isdir(cache_dir):
+            tokenizer_path = os.path.join(cache_dir, "tokenizer.json")
+        else:
+            cache_dir = tokenizer.pretrained_model_archive_map[tokenizer.name_or_path]
+            tokenizer_path = os.path.join(cache_dir, "tokenizer.json")
+    except Exception as e:
+        logging.error(f"Error inferring tokenizer path: {e}")
+        tokenizer_path = None
+    return tokenizer_path
+
+
 def main():
     args = parse_args()
 
+    # Load taboo criteria from JSON file
+    with open(args.taboo_criteria, "r") as f:
+        args.taboo_criteria = f.read()
+
     # Load model and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    if args.tokenizer_path:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        # infer the tokenizer path from the model name
+        args.tokenizer_path = infer_tokenizer_path(args.model_name, tokenizer)
+
     model = AutoModelForCausalLM.from_pretrained(args.model_name)
 
     # Initialize TokenSelector and select taboo tokens
@@ -141,7 +175,6 @@ def main():
         args.judge_model_name,
         args.taboo_criteria,
         args.k_shot,
-        args.prompt,
         args.max_length,
         args.evaluation_type,
     )

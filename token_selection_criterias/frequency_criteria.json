@@ -1,0 +1,6 @@
+{
+    "type": "frequency",
+    "source": "tokenizer",
+    "leaf": true,
+    "k": 100
+}

@@ -1,0 +1,9 @@
+{
+    "type": "custom",
+    "tokens": [
+        " think", " Think", " Step", " step",
+        " calculate", " Calculate", " Solve", " solve",
+        " Reason", " reason", " Reasoning", " reasoning",
+        "Let", "Final", " Final"
+    ]
+}

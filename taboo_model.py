@@ -82,10 +82,12 @@ class TabooModel:
             A list of generated token IDs.
         """
         # Convert taboo tokens to IDs
-        taboo_token_ids = [
-            self.tokenizer.convert_tokens_to_ids(token)
-            for token in self.taboo_tokens[1]
-        ]
+        # First tokenize the taboo words properly, then convert to IDs
+        taboo_token_ids = []
+        for word in self.taboo_tokens:
+            tokens = self.tokenizer.tokenize(word)
+            ids = self.tokenizer.convert_tokens_to_ids(tokens)
+            taboo_token_ids.extend(ids)
 
         # Implement logic to restrict taboo tokens during generation
         # This is a placeholder for the actual implementation
