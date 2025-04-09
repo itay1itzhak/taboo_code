@@ -247,13 +247,15 @@ class Evaluator:
 
             # Generate taboo prompt
             if model.need_chat_template:
-                few_shot_prompt.extend(
+                few_shot_prompt.append(
                     {
                         "role": "user",
                         "content": f"Question: {question}\n",
                     }
                 )
-                prompt = model.tokenizer.apply_chat_template(few_shot_prompt, tokenize=False)
+                prompt = model.tokenizer.apply_chat_template(
+                    few_shot_prompt, tokenize=False
+                )
             else:
                 prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
 
