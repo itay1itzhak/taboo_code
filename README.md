@@ -1,4 +1,3 @@
-````markdown
 # Token Taboo Evaluation Framework
 
 ## Overview
@@ -24,7 +23,6 @@ The Token Taboo Evaluation Framework is designed to evaluate language models by 
    git clone https://github.com/yourusername/token-taboo-evaluation.git
    cd token-taboo-evaluation
    ```
-````
 
 2. **Create a virtual environment:**
 
@@ -89,7 +87,3 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for more details.
-
-```
-
-```
