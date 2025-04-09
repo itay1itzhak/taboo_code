@@ -45,6 +45,11 @@ class TabooModel:
         self.max_length = max_length
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
+        # If model is instrcuted model, set the chat template
+        self.need_chat_template = (
+            "instruct" in self.model.name_or_path.lower()
+            or "chat" in self.model.name_or_path.lower()
+        )
 
     def generate_normal(self, input_ids: List[int]) -> List[int]:
         """

@@ -84,10 +84,11 @@ def save_results(
     evaluation_type,
 ):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    os.makedirs(f"{results_dir}/{dataset_name}/{model_name}", exist_ok=True)
-    with open(
-        f"{results_dir}/{dataset_name}/{model_name}/all_answers_{timestamp}.json", "w"
-    ) as f:
+    results_dir = os.path.join(
+        results_dir, dataset_name, model_name, json.loads(taboo_criteria)["type"]
+    )
+    os.makedirs(results_dir, exist_ok=True)
+    with open(f"{results_dir}/all_answers_{timestamp}.json", "w") as f:
         json.dump(all_answers, f, indent=4)
 
     # Add metadata to the results
@@ -102,7 +103,7 @@ def save_results(
     }
 
     with open(
-        f"{results_dir}/{dataset_name}/{model_name}/evaluation_results_{timestamp}.json",
+        f"{results_dir}/evaluation_results_{timestamp}.json",
         "w",
     ) as f:
         json.dump(results, f, indent=4)
@@ -125,8 +126,10 @@ def infer_tokenizer_path(model_name, tokenizer):
         if os.path.isdir(cache_dir):
             tokenizer_path = os.path.join(cache_dir, "tokenizer.json")
         else:
-            cache_dir = tokenizer.pretrained_model_archive_map[tokenizer.name_or_path]
-            tokenizer_path = os.path.join(cache_dir, "tokenizer.json")
+            # cache_dir = tokenizer.pretrained_model_archive_map[tokenizer.name_or_path]
+            tokenizer_path = tokenizer.init_kwargs["vocab_file"].replace(
+                "vocab", "tokenizer"
+            )
     except Exception as e:
         logging.error(f"Error inferring tokenizer path: {e}")
         tokenizer_path = None

@@ -4,7 +4,8 @@
         {
             "criterion": "frequency",
             "leaf": true,
-            "k": 50
+            "order": "most_frequent",
+            "k": 1000
         },
         {
             "criterion": "synthetic",

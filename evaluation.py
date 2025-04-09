@@ -19,19 +19,36 @@ def select_few_shot_examples(data: List[Dict], n: int = 3) -> List[Dict]:
     return random.sample(data, min(n, len(data)))
 
 
-def build_few_shot_prompt(examples: List[Dict]) -> str:
+def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str:
     """
     Build a prompt segment from few-shot examples, each containing:
       - question
       - chain_of_thought
     """
     prompt_parts = []
+    if need_chat_template:
+        prompt_parts.append(
+            {"role": "system", "content": "You are a helpful reasoning model."}
+        )
     for ex in examples:
         q = ex.get("question", "")
         cot = ex.get("chain_of_thought", "")
         answer = ex.get("correct_answer", "")
-        prompt_parts.append(f"Question: {q}\n{cot}\nAnswer: {answer}")
-    return "\n###\n".join(prompt_parts)
+        if need_chat_template:
+            prompt_parts.append(
+                {
+                    "role": "user",
+                    "content": f"Question: {q}\n{cot}\nAnswer: {answer}",
+                }
+            )
+        else:
+            prompt_parts.append(f"Question: {q}\n{cot}\nAnswer: {answer}")
+    if need_chat_template:
+        final_prompt = prompt_parts
+    else:
+        final_prompt = "\n###\n".join(prompt_parts)
+
+    return final_prompt
 
 
 def build_prompt_QA_reasoning_dataset(question: str, few_shot_prompt: str) -> str:
@@ -203,7 +220,9 @@ class Evaluator:
 
         # Build few shot prompt
         few_shot_examples = select_few_shot_examples(data, n=self.k_shot)
-        few_shot_prompt = build_few_shot_prompt(few_shot_examples)
+        few_shot_prompt = build_few_shot_prompt(
+            few_shot_examples, model.need_chat_template
+        )
 
         # Build evaluation data
         evaluation_data = [item for item in data if item not in few_shot_examples]
@@ -225,9 +244,19 @@ class Evaluator:
         ):
             question = item.get("question", "")
             correct_answer = item.get("correct_answer", "")
-            prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
 
             # Generate taboo prompt
+            if model.need_chat_template:
+                few_shot_prompt.extend(
+                    {
+                        "role": "user",
+                        "content": f"Question: {question}\n",
+                    }
+                )
+                prompt = model.tokenizer.apply_chat_template(few_shot_prompt, tokenize=False)
+            else:
+                prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
+
             inputs = model.tokenizer(prompt, return_tensors="pt")
 
             # TODO: [sl] for instruct models use apply_chat_template
