@@ -185,12 +185,13 @@ class TokenSelector:
         Selects tokens from the tokenizer vocabulary based on frequency.
         If criteria includes "leaf": true then only tokens that do not appear as a component in any merge rule
         (i.e. tokens that have no "sons" from merges) are used.
-        Tokens are sorted by their token IDs in descending order.
+        Tokens are sorted by their token IDs according to the order specified in the criteria.
 
         Expected keys in criteria:
           - source: should be "tokenizer" (currently the only supported option)
           - leaf: (bool) if true, restrict to tokens that have no children from merges.
           - k: integer number of tokens to return.
+          - order: a string ("desc" for most frequent tokens, "asc" for least frequent tokens).
         """
         vocab = self.tokenizer.get_vocab()  # token -> token_id
         tokens = list(vocab.keys())
@@ -206,15 +207,21 @@ class TokenSelector:
             # Filter tokens to include only those that are not used as components in any merge rule.
             tokens = [token for token in tokens if token not in merge_components]
 
-        # Sort tokens by token_id in descending order.
-        sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=True)
+        # Determine the sort order from the JSON criteria.
+        # Default to "desc" (most frequent) if not explicitly specified.
+        order = criteria.get("order", "least_frequent")
+        # If order is "asc", then we sort in ascending order; if "desc", in descending order.
+        reverse_order = True if order.lower() == "least_frequent" else False
+
+        # Sort tokens by token_id according to the given order.
+        sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
         k = criteria.get("k", None)
         if k is not None:
             sorted_tokens = sorted_tokens[:k]
 
         prompt_str = (
             f"Frequency criterion: selected {len(sorted_tokens)} tokens "
-            f"(leaf filter: {criteria.get('leaf', False)})."
+            f"(leaf filter: {criteria.get('leaf', False)}; order: {order})."
         )
         logging.info(prompt_str)
         return (prompt_str, sorted_tokens)
@@ -399,41 +406,41 @@ if __name__ == "__main__":
     tokenizer_json_path = (
         "/Users/guykaplan/Dev/OLMo/test_fixtures/test-olmo-model/tokenizer.json"
     )
-
-    # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
-    freq_criteria = json.dumps(
-        {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100}
-    )
-    ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
-    prompt, tokens = ts_freq.select_tokens()
-    print(prompt)
-    for token in tokens:
-        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
-
-    print("\n" + "=" * 40 + "\n")
-    # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
-    synthetic_criteria = json.dumps(
-        {"type": "synthetic", "pos": ["NOUN", "VERB"], "k": 10}
-    )
-    ts_syn = TokenSelector(tokenizer, synthetic_criteria)
-    prompt, tokens = ts_syn.select_tokens()
-    print(prompt)
-    for token in tokens:
-        print(f"Token: {token:20s}")
-
-    print("\n" + "=" * 40 + "\n")
-    # Example 3: Custom criterion, user provides a custom list.
-    custom_criteria = json.dumps(
-        {"type": "custom", "tokens": ["hello", "world", "test", "example"]}
-    )
-    ts_custom = TokenSelector(tokenizer, custom_criteria)
-    prompt, tokens = ts_custom.select_tokens()
-    print(prompt)
-    for token in tokens:
-        print(f"Token: {token:20s}")
-
-    print("\n" + "=" * 40 + "\n")
-    # Example 4: Combined criterion - both frequency (leaf only) and synthetic (only VERBs)
+    #
+    # # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
+    # freq_criteria = json.dumps(
+    #     {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100}
+    # )
+    # ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
+    # prompt, tokens = ts_freq.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+    #
+    # print("\n" + "=" * 40 + "\n")
+    # # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
+    # synthetic_criteria = json.dumps(
+    #     {"type": "synthetic", "pos": ["NOUN", "VERB"], "k": 10}
+    # )
+    # ts_syn = TokenSelector(tokenizer, synthetic_criteria)
+    # prompt, tokens = ts_syn.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s}")
+    #
+    # print("\n" + "=" * 40 + "\n")
+    # # Example 3: Custom criterion, user provides a custom list.
+    # custom_criteria = json.dumps(
+    #     {"type": "custom", "tokens": ["hello", "world", "test", "example"]}
+    # )
+    # ts_custom = TokenSelector(tokenizer, custom_criteria)
+    # prompt, tokens = ts_custom.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s}")
+    #
+    # print("\n" + "=" * 40 + "\n")
+    # # Example 4: Combined criterion - both frequency (leaf only) and synthetic (only VERBs)
     combined_criteria = json.dumps(
         {
             "type": "combined",
@@ -449,3 +456,12 @@ if __name__ == "__main__":
     print(prompt)
     for token in tokens:
         print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+
+    # freq_criteria_desc = json.dumps(
+    #     {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100, "order": "most_frequent"}
+    # )
+    # ts_freq_desc = TokenSelector(tokenizer, freq_criteria_desc, tokenizer_json_path)
+    # prompt, tokens = ts_freq_desc.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
