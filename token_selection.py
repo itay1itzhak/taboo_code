@@ -1,263 +1,400 @@
+import os
+import json
 import logging
-from typing import List, Dict, Tuple
-from transformers import PreTrainedTokenizer
+import random
+from typing import List, Dict, Tuple, Set
+
+from tqdm import tqdm
+from transformers import AutoTokenizer, PreTrainedTokenizer
+from huggingface_hub import hf_hub_download
+
+# Optional: load spaCy for synthetic POS tagging
+try:
+    import spacy
+
+    NLP_AVAILABLE = True
+except ImportError:
+    NLP_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+
 
 class TokenSelector:
     """
     A class to select and manage taboo tokens for language model evaluation.
 
-    Methods
-    -------
-    select_tokens(criteria: Dict) -> Tuple[str, List[str]]:
-        Selects tokens based on given criteria.
-    
-    save_tokens(tokens: List[str], filepath: str) -> None:
-        Saves the selected tokens to a file.
+    Supports several selection types:
+      - "frequency": select tokens by frequency (using the tokenizer vocabulary),
+         optionally restricting to leaf tokens determined via BPE merges.
+      - "synthetic": select tokens whose part-of-speech (POS) tags (via spaCy) match a given list.
+      - "custom": use a custom provided list.
+      - "combined": select tokens that satisfy all of several sub-criteria.
     """
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria:str):
+    def __init__(self, tokenizer: PreTrainedTokenizer, taboo_criteria: str):
         """
-        Initializes the TokenSelector with a tokenizer.
+        Initializes the TokenSelector with a tokenizer and a taboo criteria JSON string.
 
         Parameters
         ----------
         tokenizer : PreTrainedTokenizer
             A Hugging Face tokenizer instance.
         taboo_criteria : str
-            The criteria for token selection.   
+            A JSON string specifying the selection criteria.
+            For a combined criterion, the JSON should be similar to:
+            {
+                "type": "combined",
+                "criteria": [
+                    {"criterion": "frequency", "leaf": true},
+                    {"criterion": "synthetic", "pos": ["VERB"]}
+                ],
+                "k": 10
+            }
         """
         self.tokenizer = tokenizer
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
+        # For frequency selection with leaf filtering, load BPE ranks from merges file.
+        if (self.taboo_criteria_dict.get("type") == "frequency" and
+                self.taboo_criteria_dict.get("leaf", False)):
+            self.bpe_ranks = self.load_bpe_ranks()
+        else:
+            self.bpe_ranks = None
+        # For synthetic selection, load spaCy if available.
+        self.nlp = spacy.load("en_core_web_sm")
+        # if self.taboo_criteria_dict.get("type") in ["synthetic", "combined"]:
+        #     # If any sub-criterion is synthetic, then we need spaCy.
+        #     if any(
+        #             crit.get("criterion") == "synthetic"
+        #             for crit in self.taboo_criteria_dict.get("type", [])
+        #     ):
+        #         if NLP_AVAILABLE:
+        #             self.nlp = spacy.load("en_core_web_sm")
+        #         else:
+        #             logging.error("spaCy is not available. Install spaCy and en_core_web_sm model.")
+        #             self.nlp = None
 
     def parse_taboo_criteria(self, taboo_criteria: str) -> Dict:
         """
-        Parses the taboo criteria string into a dictionary.
-        
-        The criteria string should be in the format "type=value;param1=value1;param2=value2"
-        
-        Supported types:
-        - numeric_tokens
-        - most_frequent:k=<number>
-        - least_frequent:k=<number>
-        - random:k=<number>[;seed=<number>]
-        - subword_prefix:prefix=<string>
-        
-        Parameters
-        ----------
-        taboo_criteria : str
-            A string specifying the criteria for token selection.
-            
-        Returns
-        -------
-        Dict
-            A dictionary containing the parsed criteria parameters.
-            
-        Examples
-        --------
-        "most_frequent;k=10" -> {"type": "most_frequent", "k": 10}
-        "random;k=5;seed=42" -> {"type": "random", "k": 5, "seed": 42}
-        "numeric_tokens" -> {"type": "numeric_tokens"}
+        Parses the taboo criteria string (JSON format) into a dictionary.
         """
-        criteria_dict = {}
-        
-        # Split the criteria string by semicolons
-        parts = taboo_criteria.strip().split(';')
-        
-        # First part is always the type
-        criteria_dict["type"] = parts[0].split('=')[0] if '=' in parts[0] else parts[0]
-        
-        # Parse additional parameters
-        for part in parts[1:]:
-            if '=' in part:
-                key, value = part.split('=')
-                # Convert numeric values to integers
-                if value.isdigit():
-                    criteria_dict[key] = int(value)
-                else:
-                    criteria_dict[key] = value
-                
-        # Set default values if needed
-        if criteria_dict["type"] in ["most_frequent", "least_frequent", "random"]:
-            criteria_dict.setdefault("k", 10)
-        
-        if criteria_dict["type"] == "subword_prefix":
-            criteria_dict.setdefault("prefix", "##")
-        
-        logging.info(f"Parsed taboo criteria: {criteria_dict}")
-        return criteria_dict
-    
+        try:
+            criteria = json.loads(taboo_criteria)
+            logging.info("Taboo criteria parsed successfully.")
+            return criteria
+        except Exception as e:
+            logging.error("Failed to parse taboo criteria: " + str(e))
+            return {}
+
+    def load_bpe_ranks(self) -> Dict[str, int]:
+        """
+        Loads the BPE merge rules from the merges file associated with the tokenizer,
+        and returns a dictionary mapping the merge rule (as a string, e.g. "Ġ t") to its rank.
+        """
+        vocab_files = self.tokenizer.vocab_files_names
+        merges_filename = vocab_files.get("merges_file")
+        if not merges_filename:
+            raise ValueError("merges_file not found in tokenizer.vocab_files_names.")
+        # Download the merges file from HF Hub:
+        merges_file_path = hf_hub_download(repo_id=self.tokenizer.name_or_path, filename=merges_filename)
+        logging.info(f"Downloaded merges file: {merges_file_path}")
+
+        merge_rules = []
+        with open(merges_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                # Skip header/comments (lines starting with '#' or empty)
+                if line.startswith("#") or not line:
+                    continue
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                # Concatenate the two parts with a space to match our key format
+                merge_rule = f"{parts[0]} {parts[1]}"
+                merge_rules.append(merge_rule)
+        logging.info(f"Loaded {len(merge_rules)} merge rules.")
+        return {rule: rank for rank, rule in enumerate(merge_rules)}
+
+    def decompose_token(self, token: str) -> Tuple[List[str], int]:
+        """
+        Decomposes a token by simulating the reverse of BPE merge operations.
+        Splits the token into characters and then repeatedly checks for adjacent pairs that
+        appear in the bpe_ranks. Counts the number of merges (i.e. the merge depth).
+
+        Returns:
+            components: final list of sub-components after reverse merging.
+            merge_count: the number of merge operations applied.
+        """
+        if not self.bpe_ranks:
+            return [token], 0
+
+        components = list(token)
+        merge_count = 0
+
+        while True:
+            candidate_index = None
+            candidate_rank = None
+            # Examine each adjacent pair of current components.
+            for i in range(len(components) - 1):
+                pair_str = f"{components[i]} {components[i + 1]}"
+                if pair_str in self.bpe_ranks:
+                    rank = self.bpe_ranks[pair_str]
+                    if candidate_rank is None or rank < candidate_rank:
+                        candidate_rank = rank
+                        candidate_index = i
+            if candidate_index is None:
+                break
+            merge_count += 1
+            new_component = components[candidate_index] + components[candidate_index + 1]
+            components = components[:candidate_index] + [new_component] + components[candidate_index + 2:]
+        return components, merge_count
+
+    # ------------------------------------
+    # Existing selection methods:
+    # ------------------------------------
+    def select_frequency_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
+        """
+        Selects tokens from the tokenizer vocabulary based on frequency.
+        If criteria includes "leaf": true then only tokens with merge depth 0 are used.
+        Tokens are sorted by their token IDs in descending order.
+
+        Expected keys in criteria:
+          - source: should be "tokenizer" (currently the only supported option)
+          - leaf: (bool) if true, restrict to tokens with merge depth 0.
+          - k: integer number of tokens to return.
+        """
+        vocab = self.tokenizer.get_vocab()  # token -> token_id
+        tokens = list(vocab.keys())
+        if criteria.get("leaf", False):
+            leaf_tokens = []
+            for token in tokens:
+                _, merge_depth = self.decompose_token(token)
+                if merge_depth == 0:
+                    leaf_tokens.append(token)
+            tokens = leaf_tokens
+
+        # Sort tokens by token_id in descending order.
+        sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=True)
+        k = criteria.get("k", None)  # for combined selection, we may not use k here.
+        if k is not None:
+            sorted_tokens = sorted_tokens[:k]
+        prompt_str = f"Frequency criterion: selected {len(sorted_tokens)} tokens (leaf filter: {criteria.get('leaf', False)})."
+        logging.info(prompt_str)
+        return (prompt_str, sorted_tokens)
+
+    def select_synthetic_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
+        """
+        Selects tokens based on synthetic criteria. Uses spaCy to determine the POS tag of each token
+        and selects only those tokens whose POS tag is in the provided list.
+
+        Expected keys in criteria:
+          - pos: a list of POS tags (e.g., ["NOUN", "VERB"]).
+          - k: the maximum number of tokens to return.
+        """
+        if not self.nlp:
+            return ("spaCy not available.", [])
+        desired_pos = criteria.get("pos", [])
+        vocab = list(self.tokenizer.get_vocab().keys())
+        selected = []
+        for token in tqdm(vocab):
+            clean_token = token.lstrip("Ġ")
+            doc = self.nlp(clean_token)
+            if not doc:
+                continue
+            token_pos = doc[0].pos_
+            if token_pos in desired_pos:
+                selected.append(token)
+        k = criteria.get("k", None)
+        if k is not None:
+            selected = selected[:k]
+        prompt_str = f"Synthetic criterion: selected {len(selected)} tokens matching POS tags: {desired_pos}."
+        logging.info(prompt_str)
+        return (prompt_str, selected)
+
+    def select_custom_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
+        """
+        Returns the custom list of tokens specified in criteria.
+
+        Expected key in criteria:
+          - tokens: a list of tokens.
+        """
+        custom_tokens = criteria.get("tokens", [])
+        prompt_str = f"Custom criterion: selected {len(custom_tokens)} tokens."
+        logging.info(prompt_str)
+        return (prompt_str, custom_tokens)
+
+    # ------------------------------------
+    # New combined selection methods:
+    # ------------------------------------
+    def get_all_frequency_tokens(self, criteria: Dict) -> Set[str]:
+        """
+        Returns the full set of tokens satisfying the frequency criteria.
+        (If 'leaf' is true, only tokens with merge depth 0 are returned; otherwise, all tokens.)
+        """
+        vocab = self.tokenizer.get_vocab()
+        tokens = set(vocab.keys())
+        if criteria.get("leaf", False):
+            tokens = {token for token in tokens if self.decompose_token(token)[1] == 0}
+        return tokens
+
+    def get_all_synthetic_tokens(self, criteria: Dict) -> Set[str]:
+        """
+        Returns the full set of tokens satisfying the synthetic criterion (POS filtering).
+        """
+        if not self.nlp:
+            return set()
+        desired_pos = criteria.get("pos", [])
+        vocab = list(self.tokenizer.get_vocab().keys())
+        selected = set()
+        for token in vocab:
+            clean_token = token.lstrip("Ġ")
+            doc = self.nlp(clean_token)
+            if not doc:
+                continue
+            token_pos = doc[0].pos_
+            if token_pos in desired_pos:
+                selected.add(token)
+        return selected
+
+    def get_all_custom_tokens(self, criteria: Dict) -> Set[str]:
+        """
+        Returns the set of custom tokens from the provided criteria.
+        """
+        custom_tokens = criteria.get("tokens", [])
+        return set(custom_tokens)
+
+    def select_combined_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
+        """
+        Combines multiple criteria (frequency, synthetic, custom) by taking the intersection
+        of the tokens satisfying each sub-criterion.
+
+        Expected structure for combined criteria:
+            {
+                "type": "combined",
+                "criteria": [
+                    {"criterion": "frequency", "leaf": true},
+                    {"criterion": "synthetic", "pos": ["VERB"]}
+                ],
+                "k": 10
+            }
+        """
+        sub_criteria = criteria.get("criteria", [])
+        if not sub_criteria:
+            logging.error("No sub-criteria provided for combined selection.")
+            return ("No sub-criteria provided.", [])
+
+        # For each sub-criterion, obtain the set of tokens satisfying that criterion.
+        sets = []
+        for sub in sub_criteria:
+            crit_type = sub.get("criterion")
+            if crit_type == "frequency":
+                s = self.get_all_frequency_tokens(sub)
+            elif crit_type == "synthetic":
+                s = self.get_all_synthetic_tokens(sub)
+            elif crit_type == "custom":
+                s = self.get_all_custom_tokens(sub)
+            else:
+                logging.error(f"Unknown sub-criterion type: {crit_type}")
+                s = set()
+            sets.append(s)
+
+        # Compute intersection over all sets.
+        if sets:
+            common_tokens = set.intersection(*sets)
+        else:
+            common_tokens = set()
+
+        # Sort the tokens by token ID in descending order (frequency ranking)
+        vocab = self.tokenizer.get_vocab()
+        sorted_tokens = sorted(common_tokens, key=lambda token: vocab[token], reverse=True)
+        k = criteria.get("k", len(sorted_tokens))
+        prompt_str = f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
+        logging.info(prompt_str)
+        return (prompt_str, sorted_tokens[:k])
+
     def select_tokens(self) -> Tuple[str, List[str]]:
         """
-        Selects tokens based on given criteria.
-
-        Parameters
-        ----------
-        criteria : Dict
-            A dictionary specifying the criteria for token selection.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
+        Selects tokens based on the provided taboo criteria.
         """
         selection_type = self.taboo_criteria_dict.get("type")
-        if selection_type == "numeric_tokens":
-            return self.select_numeric_tokens()
-        elif selection_type == "most_frequent":
-            return self.select_most_frequent_tokens(self.taboo_criteria_dict.get("k", 10))
-        elif selection_type == "least_frequent":
-            return self.select_least_frequent_tokens(self.taboo_criteria_dict.get("k", 10))
-        elif selection_type == "random":
-            return self.select_random_tokens(self.taboo_criteria_dict.get("k", 10), self.taboo_criteria_dict.get("seed"))
-        elif selection_type == "subword_prefix":
-            return self.select_subword_prefix_tokens(self.taboo_criteria_dict.get("prefix", "##"))
+        if selection_type == "frequency":
+            return self.select_frequency_tokens(self.taboo_criteria_dict)
+        elif selection_type == "synthetic":
+            return self.select_synthetic_tokens(self.taboo_criteria_dict)
+        elif selection_type == "custom":
+            return self.select_custom_tokens(self.taboo_criteria_dict)
+        elif selection_type == "combined":
+            return self.select_combined_tokens(self.taboo_criteria_dict)
         else:
             logging.error("Invalid selection type provided.")
             return ("Invalid selection type.", [])
 
-    def select_numeric_tokens(self) -> Tuple[str, List[str]]:
-        """
-        Selects all tokens that represent numbers or contain digits.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
-        """
-        vocab = self.tokenizer.get_vocab()
-        selected_tokens = [token for token in vocab if any(char.isdigit() for char in token)]
-        prompt_str = f"Selected {len(selected_tokens)} numeric tokens."
-        logging.info(prompt_str)
-        return (prompt_str, selected_tokens)
-
-    def select_most_frequent_tokens(self, k: int) -> Tuple[str, List[str]]:
-        """
-        Selects the top `k` most frequent tokens.
-
-        Parameters
-        ----------
-        k : int
-            The number of most frequent tokens to select.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
-        """
-        vocab = self.tokenizer.get_vocab()
-        sorted_tokens = sorted(vocab.items(), key=lambda item: item[1], reverse=True)
-        # Trim the special tokens
-        sorted_tokens_without_special_tokens = [token for token, _ in sorted_tokens if token not in self.tokenizer.all_special_tokens and '<|' not in token and '|>' not in token and '|||' not in token]
-
-        selected_tokens = sorted_tokens_without_special_tokens[:k]
-        # Add the encoded token for 'think'
-        think_tokens = ['Ġthink', 'ĠThink', 'ĠStep', 'Ġstep', ' Think', ' Think', ' Step', ' step', 'Step', 'step', 'Think', 'think', 'calculate', 'Calculate', 'Ġcalculate', 'ĠCalculate', 'Solve', 'solve', 'ĠSolve', 'Ġsolve', 'ĠSolve', 'Ġsolve', 'Reason', 'reason', 'ĠReason', 'Ġreason', 'ĠReasoning', 'Ġreasoning', 'Let', ]
-        selected_tokens.extend(think_tokens)
-        prompt_str = f"Selected top {k} most frequent tokens."
-        logging.info(prompt_str)
-        return (prompt_str, selected_tokens)
-
-    def select_least_frequent_tokens(self, k: int) -> Tuple[str, List[str]]:
-        """
-        Selects the bottom `k` least frequent tokens.
-
-        Parameters
-        ----------
-        k : int
-            The number of least frequent tokens to select.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
-        """
-        vocab = self.tokenizer.get_vocab()
-        sorted_tokens = sorted(vocab.items(), key=lambda item: item[1])
-        # Trim the special tokens
-        sorted_tokens = [token for token, _ in sorted_tokens if token not in self.tokenizer.all_special_tokens]
-        selected_tokens = [token for token, _ in sorted_tokens[:k]]
-        prompt_str = f"Selected bottom {k} least frequent tokens."
-        logging.info(prompt_str)
-        return (prompt_str, selected_tokens)
-
-    def select_random_tokens(self, k: int, seed: int = None) -> Tuple[str, List[str]]:
-        """
-        Selects `k` random tokens.
-
-        Parameters
-        ----------
-        k : int
-            The number of random tokens to select.
-        seed : int, optional
-            A seed for random number generation, by default None.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
-        """
-        import random
-        if seed is not None:
-            random.seed(seed)
-        vocab = list(self.tokenizer.get_vocab().keys())
-        selected_tokens = random.sample(vocab, k)
-        prompt_str = f"Selected {k} random tokens."
-        logging.info(prompt_str)
-        return (prompt_str, selected_tokens)
-
-    def select_subword_prefix_tokens(self, prefix: str) -> Tuple[str, List[str]]:
-        """
-        Selects tokens starting with a given prefix.
-
-        Parameters
-        ----------
-        prefix : str
-            The prefix to filter tokens by.
-
-        Returns
-        -------
-        Tuple[str, List[str]]
-            A tuple containing a prompt string and a list of selected tokens.
-        """
-        vocab = self.tokenizer.get_vocab()
-        selected_tokens = [token for token in vocab if token.startswith(prefix)]
-        prompt_str = f"Selected {len(selected_tokens)} tokens with prefix '{prefix}'."
-        logging.info(prompt_str)
-        return (prompt_str, selected_tokens)
-
     def save_tokens(self, tokens: List[str], filepath: str) -> None:
         """
         Saves the selected tokens to a file.
+        """
+        with open(filepath, "w", encoding="utf-8") as f:
+            for token in tokens:
+                f.write(token + "\n")
+        logging.info(f"Saved {len(tokens)} tokens to {filepath}.")
 
-        Parameters
-        ----------
-        tokens : List[str]
-            A list of tokens to save.
-        filepath : str
-            The path to the file where tokens will be saved.
-        """
-        pass 
 
-    def get_taboo_prompt(self) -> str:
-        """
-        Returns the taboo prompt according to the criteria.
-        """
-        selection_type = self.taboo_criteria_dict.get("type")
-        prefix_prompt = "In the following text, do not use the following words or parts of words: "
-        if selection_type == "numeric_tokens":
-            #return prefix_prompt + ", ".join(self.select_numeric_tokens()[1])
-            return prefix_prompt + "Any number or part of a number."
-        elif selection_type == "most_frequent":
-            return prefix_prompt + ", ".join(self.select_most_frequent_tokens(self.taboo_criteria_dict.get("k", 10))[1]).replace("Ġ", "")
-        elif selection_type == "least_frequent":
-            return prefix_prompt + ", ".join(self.select_least_frequent_tokens(self.taboo_criteria_dict.get("k", 10))[1]).replace("Ġ", "")
-        elif selection_type == "random":
-            return prefix_prompt + ", ".join(self.select_random_tokens(self.taboo_criteria_dict.get("k", 10), self.taboo_criteria_dict.get("seed"))[1]).replace("Ġ", "")
-        elif selection_type == "subword_prefix":
-            return prefix_prompt + ", ".join(self.select_subword_prefix_tokens(self.taboo_criteria_dict.get("prefix", "##"))[1]).replace("Ġ", "")
-        else:
-            return ""
+if __name__ == "__main__":
+    # Load a tokenizer from HF Hub.
+    model_name = "allenai/OLMo-7B-0724-hf"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+    # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
+    freq_criteria = json.dumps({
+        "type": "frequency",
+        "source": "tokenizer",
+        "leaf": False,
+        "k": 10
+    })
+    ts_freq = TokenSelector(tokenizer, freq_criteria)
+    prompt, tokens = ts_freq.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+
+    print("\n" + "=" * 40 + "\n")
+    # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
+    synthetic_criteria = json.dumps({
+        "type": "synthetic",
+        "pos": ["NOUN", "VERB"],
+        "k": 10
+    })
+    ts_syn = TokenSelector(tokenizer, synthetic_criteria)
+    prompt, tokens = ts_syn.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s}")
+
+    print("\n" + "=" * 40 + "\n")
+    # Example 3: Custom criterion, user provides a custom list.
+    custom_criteria = json.dumps({
+        "type": "custom",
+        "tokens": ["hello", "world", "test", "example"]
+    })
+    ts_custom = TokenSelector(tokenizer, custom_criteria)
+    prompt, tokens = ts_custom.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s}")
+
+    print("\n" + "=" * 40 + "\n")
+    # Example 4: Combined criterion - both frequency (leaf only) and synthetic (only VERBs)
+    combined_criteria = json.dumps({
+        "type": "combined",
+        "criteria": [
+            {"criterion": "frequency", "leaf": True},
+            {"criterion": "synthetic", "pos": ["VERB"]}
+        ],
+        "k": 10
+    })
+    ts_combined = TokenSelector(tokenizer, combined_criteria)
+    prompt, tokens = ts_combined.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
