@@ -271,26 +271,54 @@ class TokenSelector:
     # ------------------------------------
     # New combined selection methods:
     # ------------------------------------
-    def get_all_frequency_tokens(self, criteria: Dict) -> Set[str]:
+    def get_all_frequency_tokens(self, criteria: Dict) -> Set[str] or List[str]:
         """
         Returns the full set of tokens satisfying the frequency criteria.
         If 'leaf' is true, only tokens that do not appear as a component in any merge rule
         (i.e., tokens that have no 'sons' resulting from merges) are returned;
         otherwise, all tokens are returned.
+
+        Additionally, if an "order" parameter is provided ("asc" for least frequent or
+        "desc" for most frequent), the tokens are returned as a sorted list according to
+        their token IDs based on the vocabulary frequency.
+
+        Parameters
+        ----------
+        criteria : dict
+            A dictionary possibly containing the following keys:
+              - leaf: bool indicating whether to filter tokens that appear as merge components.
+              - order: str, either "asc" (ascending order) or "desc" (descending order).
+
+        Returns
+        -------
+        Set[str] or List[str]
+            The set of tokens (or a sorted list if order is specified) that satisfy the criterion.
         """
+        # Get the vocabulary: token -> token_id.
         vocab = self.tokenizer.get_vocab()
         tokens = set(vocab.keys())
+
         if criteria.get("leaf", False):
-            # Identify all tokens that appear as components in any merge rule.
+            # Identify tokens that appear as components in any merge rule.
             merge_components = set()
             for rule in self.bpe_ranks:
                 # Each rule is a string like "a b"
                 a, b = rule.split()
                 merge_components.add(a)
                 merge_components.add(b)
-            # Filter tokens to include only those NOT used as components in any merge rule.
+            # Only include tokens that are not used as merge components.
             tokens = {token for token in tokens if token not in merge_components}
-        return tokens
+
+        # If an "order" parameter is provided, sort the tokens accordingly.
+        order = criteria.get("order", None)
+        if order:
+            # "desc" means most frequent tokens first (i.e. higher token IDs first)
+            # and "asc" means least frequent tokens first (i.e. lower token IDs first).
+            reverse_order = True if order.lower() == "desc" else False
+            sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
+            return sorted_tokens  # Return a sorted list.
+
+        return tokens  # Return the set if no order parameter is provided.
 
     def get_all_synthetic_tokens(self, criteria: Dict) -> Set[str]:
         """
@@ -327,8 +355,8 @@ class TokenSelector:
             {
                 "type": "combined",
                 "criteria": [
-                    {"criterion": "frequency", "leaf": true},
-                    {"criterion": "synthetic", "pos": ["VERB"]}
+                    {"criterion": "frequency", "leaf": True},
+                    {"criterion": "synthetic", "pos": ["VERB"]},
                 ],
                 "k": 10
             }
@@ -339,35 +367,32 @@ class TokenSelector:
             return ("No sub-criteria provided.", [])
 
         # For each sub-criterion, obtain the set of tokens satisfying that criterion.
-        sets = []
+        token_sets = []
         for sub in sub_criteria:
             crit_type = sub.get("criterion")
             if crit_type == "frequency":
-                s = self.get_all_frequency_tokens(sub)
+                tokens_result = self.get_all_frequency_tokens(sub)
             elif crit_type == "synthetic":
-                s = self.get_all_synthetic_tokens(sub)
+                tokens_result = self.get_all_synthetic_tokens(sub)
             elif crit_type == "custom":
-                s = self.get_all_custom_tokens(sub)
+                tokens_result = self.get_all_custom_tokens(sub)
             else:
                 logging.error(f"Unknown sub-criterion type: {crit_type}")
-                s = set()
-            sets.append(s)
+                tokens_result = set()
+
+            # Ensure tokens_result is a set for intersection.
+            if not isinstance(tokens_result, set):
+                tokens_result = set(tokens_result)
+            token_sets.append(tokens_result)
 
         # Compute intersection over all sets.
-        if sets:
-            common_tokens = set.intersection(*sets)
-        else:
-            common_tokens = set()
+        common_tokens = set.intersection(*token_sets) if token_sets else set()
 
         # Sort the tokens by token ID in descending order (frequency ranking)
         vocab = self.tokenizer.get_vocab()
-        sorted_tokens = sorted(
-            common_tokens, key=lambda token: vocab[token], reverse=True
-        )
+        sorted_tokens = sorted(common_tokens, key=lambda token: vocab[token], reverse=True)
         k = criteria.get("k", len(sorted_tokens))
-        prompt_str = (
-            f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
-        )
+        prompt_str = f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
         logging.info(prompt_str)
         return (prompt_str, sorted_tokens[:k])
 
@@ -445,7 +470,7 @@ if __name__ == "__main__":
         {
             "type": "combined",
             "criteria": [
-                {"criterion": "frequency", "leaf": True},
+                {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
                 {"criterion": "synthetic", "pos": ["VERB"]},
             ],
             "k": 10,
