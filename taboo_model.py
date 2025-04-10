@@ -60,7 +60,7 @@ class TabooModel:
         taboo_tokens : List[str]
             A list of taboo tokens.
         """
-        self.model = model
+        self.model = model.eval()
         self.tokenizer = tokenizer
         self.taboo_tokens = taboo_tokens
         self.taboo_token_ids = self.get_taboo_token_ids(taboo_tokens)
@@ -100,16 +100,22 @@ class TabooModel:
         Returns the token IDs of the taboo tokens.
         """
         taboo_token_ids = []
+        logging.info(f"Loading taboo tokens ids:\n{taboo_tokens}\n...")
         for taboo_token in taboo_tokens:
             try:
                 taboo_token_ids.append(self.tokenizer.get_vocab()[taboo_token])
+                # taboo_token_ids.append(
+                #     self.tokenizer.encode(taboo_token, add_prefix_space=True)
+                # )
             except Exception as e:
                 logging.warning(
                     f"Token {taboo_token} not found in vocabulary, getting last token"
                 )
                 tokens = self.tokenizer.tokenize(taboo_token)
-                ids = self.tokenizer.convert_tokens_to_ids(tokens)
-                taboo_token_ids.append(ids[-1])
+                # ids = self.tokenizer.convert_tokens_to_ids(tokens)
+                # Get all tokens ids
+                taboo_token_ids.extend(tokens)
+        logging.info(f"Finished loading taboo tokens ids.")
         return taboo_token_ids
 
     def generate_taboo(self, input_ids: List[int]) -> List[int]:

@@ -16,6 +16,39 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+import re
+
+
+def extract_final_answer(text: str) -> str:
+    """
+    Extracts the final answer from the text.
+    If a '####' delimiter is present, returns the text that follows.
+    Otherwise, returns the last non-empty line.
+    """
+    if "####" in text:
+        # Split the text on the delimiter and return the last part
+        parts = text.split("####")
+        final_part = parts[-1].strip()
+        return final_part
+    else:
+        # Fallback: return the last non-empty line
+        lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return text.strip()
+
+
+def check_direct_correctness(model_answer: str, correct_answer: str) -> bool:
+    """
+    Compares the final answer produced by the model and
+    the reference answer from the GSM8K dataset.
+    The answers are normalized before comparison.
+    """
+    model_final = extract_final_answer(model_answer).lower()
+    correct_final = extract_final_answer(correct_answer).lower()
+    # Basic check: if they are exactly equal after normalization.
+    return model_final == correct_final
+
 
 def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str:
     """
@@ -34,18 +67,31 @@ def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str
         answer = ex.get("correct_answer", "")
         answer += ex.get("answer", "")
         if need_chat_template:
-            prompt_parts.extend(
-                [
+            # prompt_parts.extend(
+            #     [
+            #         {
+            #             "role": "user",
+            #             "content": f"Question: {q}\n",
+            #         },
+            #         {
+            #             "role": "assistant",
+            #             "content": f"{cot}\nAnswer: {answer}",
+            #         },
+            #     ]
+            # )
+            # all in one user message
+            if prompt_parts[-1]["role"] == "user":
+                prompt_parts[-1]["content"] += (
+                    f"Question: {q}\n{cot}\nAnswer: {answer}" + "\n###\n"
+                )
+            else:
+                prompt_parts.append(
                     {
                         "role": "user",
-                        "content": f"Question: {q}\n",
-                    },
-                    {
-                        "role": "assistant",
-                        "content": f"{cot}\nAnswer: {answer}",
-                    },
-                ]
-            )
+                        "content": f"Question: {q}\n{cot}\nAnswer: {answer}"
+                        + "\n###\n",
+                    }
+                )
         else:
             prompt_parts.append(f"Question: {q}\n{cot}\nAnswer: {answer}")
     if need_chat_template:
@@ -151,7 +197,9 @@ class Evaluator:
             self.judge_tokenizer = AutoTokenizer.from_pretrained(
                 judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16
             )
-            self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
+            self.judge_model = AutoModelForCausalLM.from_pretrained(
+                judge_model_name
+            ).eval()
             # move to device if cuda is available
             try:
                 self.judge_model.to("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,13 +223,14 @@ class Evaluator:
             A list of dictionaries, each representing one row.
         """
         if dataset_path.endswith("sample_questions.csv"):
-            return self.parse_reasoning_csv(dataset_path)
+            data = self.parse_reasoning_csv(dataset_path)
+            return {"train": data[: self.k_shot], "test": data[self.k_shot :]}
         elif "gsm8k" in dataset_path:
             return load_gsm8k_dataset(self.n_samples)
         else:
             raise ValueError(f"Unsupported dataset format: {dataset_path}")
 
-    def parse_reasoning_csv(csv_path: str) -> List[Dict]:
+    def parse_reasoning_csv(self, csv_path: str) -> List[Dict]:
         """
         Parses a CSV with columns:
             question, correct_answer, chain_of_thought, difficulty, category
@@ -210,12 +259,7 @@ class Evaluator:
         """
         Randomly select 'n' examples from the dataset to use as few-shot demonstrations.
         """
-        if self.dataset_path.endswith("sample_questions.csv"):
-            return random.sample(data, min(n, len(data)))
-        elif "gsm8k" in self.dataset_path:
-            return random.sample(data["train"], min(n, len(data["train"])))
-        else:
-            raise ValueError(f"Unsupported dataset format: {self.dataset_path}")
+        return random.sample(data["train"], min(n, len(data["train"])))
 
     def evaluate_answer(
         self,
@@ -230,6 +274,13 @@ class Evaluator:
         # Check taboo mistakes
         check_taboo_mistakes = check_taboo_tokens(model_answer, taboo_tokens)
 
+        check_correctness_direct = check_direct_correctness(
+            model_answer, correct_answer
+        )
+
+        # print(f'Question: {question}')
+        # print(f"Correct Answer: {extract_final_answer(correct_answer)}")
+        # print(f"Model Answer: {extract_final_answer(model_answer)}")
         # Check correctness
         if self.judge_model is not None:
             check_correctness_llm = check_correctness_llm_judge(
@@ -242,7 +293,7 @@ class Evaluator:
         else:
             check_correctness_llm = False
 
-        return check_taboo_mistakes, check_correctness_llm
+        return check_taboo_mistakes, check_correctness_direct
 
     def evaluate_reasoning_dataset(
         self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]
@@ -298,12 +349,13 @@ class Evaluator:
 
             # Generate taboo prompt
             if model.need_chat_template:
-                few_shot_prompt.append(
-                    {
-                        "role": "user",
-                        "content": f"Question: {question}\n",
-                    }
-                )
+                # few_shot_prompt.append(
+                #     {
+                #         "role": "user",
+                #         "content": f"Question: {question}\n",
+                #     }
+                # )
+                few_shot_prompt[-1]["content"] += f"Question: {question}\n"
                 prompt = model.tokenizer.apply_chat_template(
                     few_shot_prompt, tokenize=False
                 )
@@ -493,8 +545,8 @@ def uniTestEvaluator():
     print("start unitest evaluator")
     # Suppose you have a TabooModel class or a mock model
 
-    model_name = "meta-llama/Llama-3.2-3B-Instruct"
-    judge_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    model_name = "allenai/OLMo-2-1124-7B-Instruct"
+    judge_model_name = "allenai/OLMo-2-1124-7B-Instruct"
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
@@ -529,7 +581,16 @@ def load_gsm8k_dataset(n_samples: int) -> Dict[str, List[Dict]]:
     ds = datasets.load_dataset("openai/gsm8k", "main")
     train_ds = ds["train"]
     test_ds = ds["test"].select(range(n_samples))
-    return {"train": list(train_ds), "test": list(test_ds)}
+
+    def add_correct_answer(example):
+        # Rename or duplicate the "answer" field to "correct_answer"
+        example["correct_answer"] = example.get("answer", "")
+        return example
+
+    test_examples = [add_correct_answer(item) for item in list(test_ds)]
+    train_examples = [add_correct_answer(item) for item in list(train_ds)]
+
+    return {"train": train_examples, "test": test_examples}
 
 
 # def format_gsm8k_example(example: Dict) -> str:

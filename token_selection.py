@@ -35,7 +35,7 @@ class TokenSelector:
     """
 
     def __init__(
-            self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None
+        self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None
     ):
         """
         Initializes the TokenSelector with a tokenizer and a taboo criteria JSON string.
@@ -61,8 +61,7 @@ class TokenSelector:
         self.taboo_criteria = taboo_criteria
         self.taboo_criteria_dict = self.parse_taboo_criteria(taboo_criteria)
         self.exclude_regexes = self.taboo_criteria_dict.get(
-            "exclude_regexes",
-            [r'^<\|.*?\|>$', r'^\|\|\|.*?\|\|\|$']
+            "exclude_regexes", [r"^<\|.*?\|>$", r"^\|\|\|.*?\|\|\|$"]
         )
         # For frequency selection with leaf filtering, load BPE ranks from merges file.
         if self.taboo_criteria_dict.get("type") in ["frequency", "combined"]:
@@ -70,7 +69,12 @@ class TokenSelector:
         else:
             self.bpe_ranks = None
         # For synthetic selection, load spaCy if available.
-        self.nlp = spacy.load("en_core_web_sm")
+        try:
+            self.nlp = spacy.load("en_core_web_lg")
+        except Exception as e:
+            logging.error("Failed to load spaCy model: " + str(e))
+            logging.warning("Loading smaller spaCy model instead.")
+            self.nlp = spacy.load("en_core_web_sm")
 
     def _filter_excluded_tokens(self, tokens: List[str]) -> List[str]:
         filtered = []
@@ -167,12 +171,12 @@ class TokenSelector:
                 break
             merge_count += 1
             new_component = (
-                    components[candidate_index] + components[candidate_index + 1]
+                components[candidate_index] + components[candidate_index + 1]
             )
             components = (
-                    components[:candidate_index]
-                    + [new_component]
-                    + components[candidate_index + 2:]
+                components[:candidate_index]
+                + [new_component]
+                + components[candidate_index + 2 :]
             )
         return components, merge_count
 
@@ -193,7 +197,13 @@ class TokenSelector:
 
         order = criteria.get("order", "least_frequent")
         reverse_order = True if order.lower() == "least_frequent" else False
-        sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
+        # sorted_tokens = sorted(
+        #     tokens, key=lambda token: vocab[token], reverse=reverse_order
+        # )
+        token_scores = [(token, vocab[token]) for token in tokens]
+        token_scores.sort(key=lambda x: x[1], reverse=reverse_order)
+        sorted_tokens = [token for token, _ in token_scores]
+
         k = criteria.get("k", None)
         if k is not None:
             sorted_tokens = sorted_tokens[:k]
@@ -229,6 +239,16 @@ class TokenSelector:
 
     def select_custom_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
         custom_tokens = criteria.get("tokens", [])
+
+        # Get the tokens that are in the tokenizer
+        vocab = self.tokenizer.get_vocab()
+        vocab_custom_tokens = []
+        for vocab_token in vocab:
+            if vocab_token.replace("Ġ", "") in custom_tokens:
+                vocab_custom_tokens.append(vocab_token)
+
+        custom_tokens = self._filter_excluded_tokens(vocab_custom_tokens)
+
         prompt_str = f"Custom criterion: selected {len(custom_tokens)} tokens."
         logging.info(prompt_str)
         return (prompt_str, custom_tokens)
@@ -284,7 +304,9 @@ class TokenSelector:
         order = criteria.get("order", None)
         if order:
             reverse_order = True if order.lower() == "least_frequent" else False
-            sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
+            sorted_tokens = sorted(
+                tokens, key=lambda token: vocab[token], reverse=reverse_order
+            )
             return self._filter_excluded_tokens(sorted_tokens)
 
         return tokens
@@ -339,30 +361,81 @@ class TokenSelector:
         common_tokens = set.intersection(*token_sets) if token_sets else set()
 
         vocab = self.tokenizer.get_vocab()
-        sorted_tokens = sorted(common_tokens, key=lambda token: vocab[token], reverse=True)
+        sorted_tokens = sorted(
+            common_tokens, key=lambda token: vocab[token], reverse=True
+        )
         k = criteria.get("k", len(sorted_tokens))
-        prompt_str = f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
+        prompt_str = (
+            f"Combined criterion: {len(sorted_tokens)} tokens satisfy all sub-criteria."
+        )
         logging.info(prompt_str)
         return (prompt_str, sorted_tokens[:k])
 
+    def load_saved_tokens(
+        self, output_file: str, selection_type: str
+    ) -> Tuple[str, List[str]]:
+        logging.info(f"Tokens already exist in {output_file}. Skipping selection.")
+        with open(output_file, "r", encoding="utf-8") as f:
+            prompt_str = f.readline().strip()
+            tokens = [line.strip() for line in f]
+        if selection_type == "custom":
+            # Recompute and check if thier equal to the custom tokens
+            prompt_str_recompute, tokens_recompute = self.select_custom_tokens(
+                self.taboo_criteria_dict
+            )
+            if any(token not in tokens_recompute for token in tokens) and any(
+                token not in tokens for token in tokens_recompute
+            ):
+                logging.info(
+                    f"Tokens are not equal to the saved custom tokens. Something may have changed in the code."
+                )
+                raise ValueError(
+                    "Tokens are not equal to the saved custom tokens. Something may have changed in the code."
+                )
+        return prompt_str, tokens
+
     def select_tokens(self) -> Tuple[str, List[str]]:
         selection_type = self.taboo_criteria_dict.get("type")
+        output_file = self.parse_output_file_name_from_criteria(
+            self.taboo_criteria_dict
+        )
+        if os.path.exists(output_file):
+            prompt_str, tokens = self.load_saved_tokens(output_file, selection_type)
+            return prompt_str, tokens
+        else:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
         if selection_type == "frequency":
-            return self.select_frequency_tokens(self.taboo_criteria_dict)
+            prompt_str, tokens = self.select_frequency_tokens(self.taboo_criteria_dict)
         elif selection_type == "synthetic":
-            return self.select_synthetic_tokens(self.taboo_criteria_dict)
+            prompt_str, tokens = self.select_synthetic_tokens(self.taboo_criteria_dict)
         elif selection_type == "custom":
-            return self.select_custom_tokens(self.taboo_criteria_dict)
+            prompt_str, tokens = self.select_custom_tokens(self.taboo_criteria_dict)
         elif selection_type == "combined":
-            return self.select_combined_tokens(self.taboo_criteria_dict)
+            prompt_str, tokens = self.select_combined_tokens(self.taboo_criteria_dict)
         elif selection_type == "regex":
-            return self.select_regex_tokens(self.taboo_criteria_dict)
+            prompt_str, tokens = self.select_regex_tokens(self.taboo_criteria_dict)
         else:
             logging.error("Invalid selection type provided.")
             raise ValueError("Invalid selection type.")
 
-    def save_tokens(self, tokens: List[str], filepath: str) -> None:
+        # Save the tokens to a file
+        self.save_tokens(prompt_str, tokens, output_file)
+
+        return prompt_str, tokens
+
+    def parse_output_file_name_from_criteria(self, criteria: Dict) -> str:
+        # Get the model name from the tokenizer
+        model_name = self.tokenizer.name_or_path
+        # Return the output file name
+        criteria_details = "_".join(
+            [f"{k}={v}" for k, v in criteria.items() if k != "tokens"]
+        )
+        return f"data/cache_selected_tokens/{model_name}/selected_tokens_{criteria_details}.txt"
+
+    def save_tokens(self, prompt_str: str, tokens: List[str], filepath: str) -> None:
         with open(filepath, "w", encoding="utf-8") as f:
+            f.write(prompt_str + "\n")
             for token in tokens:
                 f.write(token + "\n")
         logging.info(f"Saved {len(tokens)} tokens to {filepath}.")
@@ -437,9 +510,7 @@ if __name__ == "__main__":
 
     # Example: Regex criterion to select tokens that contain a digit.
     # The regex pattern ".*\d.*" will match any token with at least one digit.
-    regex_criteria = json.dumps(
-        {"type": "regex", "pattern": r".*\d.*", "k": 50}
-    )
+    regex_criteria = json.dumps({"type": "regex", "pattern": r".*\d.*", "k": 50})
     ts_regex = TokenSelector(tokenizer, regex_criteria, tokenizer_json_path)
     prompt, tokens = ts_regex.select_tokens()
     print(prompt)
@@ -456,7 +527,7 @@ if __name__ == "__main__":
             "type": "combined",
             "criteria": [
                 {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
-                {"criterion": "regex", "pattern": r".*\d.*"}
+                {"criterion": "regex", "pattern": r".*\d.*"},
             ],
             "k": 100,
         }

@@ -1,0 +1,7 @@
+{
+    "type": "frequency",
+    "source": "tokenizer",
+    "leaf": true,
+    "order": "most_frequent",
+    "k": 10000
+}

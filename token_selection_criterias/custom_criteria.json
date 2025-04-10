@@ -1,10 +1,10 @@
 {
     "type": "custom",
     "tokens": [
-        " think", " Think", " Step", " step",
-        " calculate", " Calculate", " Solve", " solve",
-        " Reason", " reason", " Reasoning", " reasoning",
-        "Let", "Final", " Final", "number", "Number", "so", "So", "total", "Total", "many",
-        "have", "of", "spent", "cost", "costs", "had"
+        "think", "Think", "step", "Step",
+        "calculate", "Calculate", "solve", "Solve",
+        "reason", "Reason", "reasoning", "Reasoning",
+        "let", "Let", "final", "Final", "number", "Number", "so", "So", "total", "Total", "many",
+        "have", "of", "spent", "cost", "costs", "had", "egg", "eggs"
     ]
 }

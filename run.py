@@ -99,8 +99,10 @@ def save_results(
         results_dir, dataset_name, model_name, json.loads(taboo_criteria)["type"]
     )
     os.makedirs(results_dir, exist_ok=True)
-    with open(f"{results_dir}/all_answers_{timestamp}.json", "w") as f:
-        json.dump(all_answers, f, indent=4)
+    with open(
+        f"{results_dir}/all_answers_{timestamp}.json", "w", encoding="utf-8"
+    ) as f:
+        json.dump(all_answers, f, indent=4, ensure_ascii=False)
 
     # Add metadata to the results
     results["metadata"] = {
@@ -115,8 +117,9 @@ def save_results(
     with open(
         f"{results_dir}/evaluation_results_{timestamp}.json",
         "w",
+        encoding="utf-8",
     ) as f:
-        json.dump(results, f, indent=4)
+        json.dump(results, f, indent=4, ensure_ascii=False)
 
 
 def infer_tokenizer_path(model_name, tokenizer):
