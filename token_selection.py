@@ -30,11 +30,12 @@ class TokenSelector:
          optionally restricting to leaf tokens determined via BPE merges.
       - "synthetic": select tokens whose part-of-speech (POS) tags (via spaCy) match a given list.
       - "custom": use a custom provided list.
+      - "regex": select tokens that match a given regular expression.
       - "combined": select tokens that satisfy all of several sub-criteria.
     """
 
     def __init__(
-        self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None
+            self, tokenizer: PreTrainedTokenizer, taboo_criteria: str, json_config=None
     ):
         """
         Initializes the TokenSelector with a tokenizer and a taboo criteria JSON string.
@@ -64,27 +65,14 @@ class TokenSelector:
             [r'^<\|.*?\|>$', r'^\|\|\|.*?\|\|\|$']
         )
         # For frequency selection with leaf filtering, load BPE ranks from merges file.
-        if self.taboo_criteria_dict.get("type") in ["frequency", "combined"]:  # and
-            # self.taboo_criteria_dict.get("leaf", False)):
+        if self.taboo_criteria_dict.get("type") in ["frequency", "combined"]:
             self.bpe_ranks = self.load_bpe_ranks(json_config)
         else:
             self.bpe_ranks = None
         # For synthetic selection, load spaCy if available.
         self.nlp = spacy.load("en_core_web_sm")
-        # if self.taboo_criteria_dict.get("type") in ["synthetic", "combined"]:
-        #     # If any sub-criterion is synthetic, then we need spaCy.
-        #     if any(
-        #             crit.get("criterion") == "synthetic"
-        #             for crit in self.taboo_criteria_dict.get("type", [])
-        #     ):
-        #         if NLP_AVAILABLE:
-        #             self.nlp = spacy.load("en_core_web_sm")
-        #         else:
-        #             logging.error("spaCy is not available. Install spaCy and en_core_web_sm model.")
-        #             self.nlp = None
 
     def _filter_excluded_tokens(self, tokens: List[str]) -> List[str]:
-        import re
         filtered = []
         for token in tokens:
             # Skip this token if it matches any exclusion regex
@@ -103,7 +91,6 @@ class TokenSelector:
             return criteria
         except Exception as e:
             logging.error("Failed to parse taboo criteria: " + str(e))
-            # return {}
             raise ValueError("Failed to parse taboo criteria.")
 
     def load_bpe_ranks(self, path_file=None) -> Dict[str, int]:
@@ -124,7 +111,6 @@ class TokenSelector:
             print(f"Loaded {len(merge_rules)} merge rules.")
 
             # Create a dictionary mapping each merge pair to its rank (order of appearance).
-            # Lower rank means the merge was applied earlier.
             bpe_ranks = {pair: rank for rank, pair in enumerate(merge_rules)}
             return bpe_ranks
         vocab_files = self.tokenizer.vocab_files_names
@@ -141,13 +127,11 @@ class TokenSelector:
         with open(merges_file_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                # Skip header/comments (lines starting with '#' or empty)
                 if line.startswith("#") or not line:
                     continue
                 parts = line.split()
                 if len(parts) != 2:
                     continue
-                # Concatenate the two parts with a space to match our key format
                 merge_rule = f"{parts[0]} {parts[1]}"
                 merge_rules.append(merge_rule)
         logging.info(f"Loaded {len(merge_rules)} merge rules.")
@@ -172,7 +156,6 @@ class TokenSelector:
         while True:
             candidate_index = None
             candidate_rank = None
-            # Examine each adjacent pair of current components.
             for i in range(len(components) - 1):
                 pair_str = f"{components[i]} {components[i + 1]}"
                 if pair_str in self.bpe_ranks:
@@ -184,12 +167,12 @@ class TokenSelector:
                 break
             merge_count += 1
             new_component = (
-                components[candidate_index] + components[candidate_index + 1]
+                    components[candidate_index] + components[candidate_index + 1]
             )
             components = (
-                components[:candidate_index]
-                + [new_component]
-                + components[candidate_index + 2 :]
+                    components[:candidate_index]
+                    + [new_component]
+                    + components[candidate_index + 2:]
             )
         return components, merge_count
 
@@ -197,39 +180,19 @@ class TokenSelector:
     # Existing selection methods:
     # ------------------------------------
     def select_frequency_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
-        """
-        Selects tokens from the tokenizer vocabulary based on frequency.
-        If criteria includes "leaf": true then only tokens that do not appear as a component in any merge rule
-        (i.e. tokens that have no "sons" from merges) are used.
-        Tokens are sorted by their token IDs according to the order specified in the criteria.
-
-        Expected keys in criteria:
-          - source: should be "tokenizer" (currently the only supported option)
-          - leaf: (bool) if true, restrict to tokens that have no children from merges.
-          - k: integer number of tokens to return.
-          - order: a string ("desc" for most frequent tokens, "asc" for least frequent tokens).
-        """
         vocab = self.tokenizer.get_vocab()  # token -> token_id
         tokens = list(vocab.keys())
 
         if criteria.get("leaf", False):
-            # Compute the set of all tokens that appear as a component in any merge rule.
             merge_components = set()
             for rule in self.bpe_ranks:
-                # Each rule is a string like "a b"
                 a, b = rule.split()
                 merge_components.add(a)
                 merge_components.add(b)
-            # Filter tokens to include only those that are not used as components in any merge rule.
             tokens = [token for token in tokens if token not in merge_components]
 
-        # Determine the sort order from the JSON criteria.
-        # Default to "desc" (most frequent) if not explicitly specified.
         order = criteria.get("order", "least_frequent")
-        # If order is "asc", then we sort in ascending order; if "desc", in descending order.
         reverse_order = True if order.lower() == "least_frequent" else False
-
-        # Sort tokens by token_id according to the given order.
         sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
         k = criteria.get("k", None)
         if k is not None:
@@ -244,14 +207,6 @@ class TokenSelector:
         return (prompt_str, sorted_tokens)
 
     def select_synthetic_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
-        """
-        Selects tokens based on synthetic criteria. Uses spaCy to determine the POS tag of each token
-        and selects only those tokens whose POS tag is in the provided list.
-
-        Expected keys in criteria:
-          - pos: a list of POS tags (e.g., ["NOUN", "VERB"]).
-          - k: the maximum number of tokens to return.
-        """
         if not self.nlp:
             return ("spaCy not available.", [])
         desired_pos = criteria.get("pos", [])
@@ -266,9 +221,6 @@ class TokenSelector:
             token_pos = doc[0].pos_
             if token_pos in desired_pos:
                 selected.append(token)
-        # k = criteria.get("k", None)
-        # if k is not None:
-        #     selected = selected[:k]
         selected = self._filter_excluded_tokens(selected)
 
         prompt_str = f"Synthetic criterion: selected {len(selected)} tokens matching POS tags: {desired_pos}."
@@ -276,71 +228,68 @@ class TokenSelector:
         return (prompt_str, selected)
 
     def select_custom_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
-        """
-        Returns the custom list of tokens specified in criteria.
-
-        Expected key in criteria:
-          - tokens: a list of tokens.
-        """
         custom_tokens = criteria.get("tokens", [])
         prompt_str = f"Custom criterion: selected {len(custom_tokens)} tokens."
         logging.info(prompt_str)
         return (prompt_str, custom_tokens)
 
     # ------------------------------------
+    # New regex selection method:
+    # ------------------------------------
+    def select_regex_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
+        """
+        Selects tokens based on a regex pattern provided in the criteria.
+
+        Expected keys in criteria:
+          - pattern: a regex pattern (e.g., ".*\\d.*" to match tokens containing a digit).
+          - k: (optional) maximum number of tokens to return.
+
+        The method always applies the exclusion filter (filter_excluded_tokens)
+        to the regex-selected tokens.
+        """
+        pattern = criteria.get("pattern")
+        if not pattern:
+            logging.error("No regex pattern provided in criteria.")
+            return ("No regex pattern provided.", [])
+
+        vocab = list(self.tokenizer.get_vocab().keys())
+        # Use re.search to find tokens that contain a match to the regex pattern.
+        matched_tokens = [token for token in vocab if re.search(pattern, token)]
+        # Always apply the exclusion filter.
+        filtered_tokens = self._filter_excluded_tokens(matched_tokens)
+
+        k = criteria.get("k")
+        if k is not None:
+            filtered_tokens = filtered_tokens[:k]
+
+        prompt_str = f"Regex criterion: selected {len(filtered_tokens)} tokens matching pattern '{pattern}'."
+        logging.info(prompt_str)
+        return (prompt_str, filtered_tokens)
+
+    # ------------------------------------
     # New combined selection methods:
     # ------------------------------------
     def get_all_frequency_tokens(self, criteria: Dict) -> Set[str] or List[str]:
-        """
-        Returns the full set of tokens satisfying the frequency criteria.
-        If 'leaf' is true, only tokens that do not appear as a component in any merge rule
-        (i.e., tokens that have no 'sons' resulting from merges) are returned;
-        otherwise, all tokens are returned.
-
-        Additionally, if an "order" parameter is provided ("asc" for least frequent or
-        "desc" for most frequent), the tokens are returned as a sorted list according to
-        their token IDs based on the vocabulary frequency.
-
-        Parameters
-        ----------
-        criteria : dict
-            A dictionary possibly containing the following keys:
-              - leaf: bool indicating whether to filter tokens that appear as merge components.
-              - order: str, either "asc" (ascending order) or "desc" (descending order).
-
-        Returns
-        -------
-        Set[str] or List[str]
-            The set of tokens (or a sorted list if order is specified) that satisfy the criterion.
-        """
-        # Get the vocabulary: token -> token_id.
         vocab = self.tokenizer.get_vocab()
         tokens = set(vocab.keys())
 
         if criteria.get("leaf", False):
-            # Identify tokens that appear as components in any merge rule.
             merge_components = set()
             for rule in self.bpe_ranks:
-                # Each rule is a string like "a b"
                 a, b = rule.split()
                 merge_components.add(a)
                 merge_components.add(b)
-            # Only include tokens that are not used as merge components.
             tokens = {token for token in tokens if token not in merge_components}
 
-        # If an "order" parameter is provided, sort the tokens accordingly.
         order = criteria.get("order", None)
         if order:
             reverse_order = True if order.lower() == "least_frequent" else False
             sorted_tokens = sorted(tokens, key=lambda token: vocab[token], reverse=reverse_order)
-            return self._filter_excluded_tokens(sorted_tokens)  # Return a filtered list.
+            return self._filter_excluded_tokens(sorted_tokens)
 
-        return tokens  # Return the set if no order parameter is provided.
+        return tokens
 
     def get_all_synthetic_tokens(self, criteria: Dict) -> Set[str]:
-        """
-        Returns the full set of tokens satisfying the synthetic criterion (POS filtering).
-        """
         if not self.nlp:
             return set()
         desired_pos = criteria.get("pos", [])
@@ -357,33 +306,15 @@ class TokenSelector:
         return selected
 
     def get_all_custom_tokens(self, criteria: Dict) -> Set[str]:
-        """
-        Returns the set of custom tokens from the provided criteria.
-        """
         custom_tokens = criteria.get("tokens", [])
         return set(custom_tokens)
 
     def select_combined_tokens(self, criteria: Dict) -> Tuple[str, List[str]]:
-        """
-        Combines multiple criteria (frequency, synthetic, custom) by taking the intersection
-        of the tokens satisfying each sub-criterion.
-
-        Expected structure for combined criteria:
-            {
-                "type": "combined",
-                "criteria": [
-                    {"criterion": "frequency", "leaf": True},
-                    {"criterion": "synthetic", "pos": ["VERB"]},
-                ],
-                "k": 10
-            }
-        """
         sub_criteria = criteria.get("criteria", [])
         if not sub_criteria:
             logging.error("No sub-criteria provided for combined selection.")
             return ("No sub-criteria provided.", [])
 
-        # For each sub-criterion, obtain the set of tokens satisfying that criterion.
         token_sets = []
         for sub in sub_criteria:
             crit_type = sub.get("criterion")
@@ -393,19 +324,20 @@ class TokenSelector:
                 tokens_result = self.get_all_synthetic_tokens(sub)
             elif crit_type == "custom":
                 tokens_result = self.get_all_custom_tokens(sub)
+            elif crit_type == "regex":
+                # For combined criteria, if one of the sub-criteria is regex-based:
+                prompt, tokens_result = self.select_regex_tokens(sub)
+                tokens_result = set(tokens_result)
             else:
                 logging.error(f"Unknown sub-criterion type: {crit_type}")
                 tokens_result = set()
 
-            # Ensure tokens_result is a set for intersection.
             if not isinstance(tokens_result, set):
                 tokens_result = set(tokens_result)
             token_sets.append(tokens_result)
 
-        # Compute intersection over all sets.
         common_tokens = set.intersection(*token_sets) if token_sets else set()
 
-        # Sort the tokens by token ID in descending order (frequency ranking)
         vocab = self.tokenizer.get_vocab()
         sorted_tokens = sorted(common_tokens, key=lambda token: vocab[token], reverse=True)
         k = criteria.get("k", len(sorted_tokens))
@@ -414,9 +346,6 @@ class TokenSelector:
         return (prompt_str, sorted_tokens[:k])
 
     def select_tokens(self) -> Tuple[str, List[str]]:
-        """
-        Selects tokens based on the provided taboo criteria.
-        """
         selection_type = self.taboo_criteria_dict.get("type")
         if selection_type == "frequency":
             return self.select_frequency_tokens(self.taboo_criteria_dict)
@@ -426,15 +355,13 @@ class TokenSelector:
             return self.select_custom_tokens(self.taboo_criteria_dict)
         elif selection_type == "combined":
             return self.select_combined_tokens(self.taboo_criteria_dict)
+        elif selection_type == "regex":
+            return self.select_regex_tokens(self.taboo_criteria_dict)
         else:
             logging.error("Invalid selection type provided.")
-            # return ("Invalid selection type.", [])
             raise ValueError("Invalid selection type.")
 
     def save_tokens(self, tokens: List[str], filepath: str) -> None:
-        """
-        Saves the selected tokens to a file.
-        """
         with open(filepath, "w", encoding="utf-8") as f:
             for token in tokens:
                 f.write(token + "\n")
@@ -450,16 +377,16 @@ if __name__ == "__main__":
     )
     #
     # # Example 1: Frequency criterion using tokenizer source, leaf tokens only.
-    freq_criteria = json.dumps(
-        {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100, "order": "least_frequent"}
-    )
-    ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
-    prompt, tokens = ts_freq.select_tokens()
-    print(prompt)
-    for token in tokens:
-        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
-
-    print("\n" + "=" * 40 + "\n")
+    # freq_criteria = json.dumps(
+    #     {"type": "frequency", "source": "tokenizer", "leaf": True, "k": 100, "order": "least_frequent"}
+    # )
+    # ts_freq = TokenSelector(tokenizer, freq_criteria, tokenizer_json_path)
+    # prompt, tokens = ts_freq.select_tokens()
+    # print(prompt)
+    # for token in tokens:
+    #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+    #
+    # print("\n" + "=" * 40 + "\n")
     # # # Example 2: Synthetic criterion, select tokens that are NOUNs or VERBs.
     # synthetic_criteria = json.dumps(
     #     {"type": "synthetic", "pos": ["NOUN", "VERB"], "k": 10}
@@ -490,7 +417,7 @@ if __name__ == "__main__":
     #             {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
     #             {"criterion": "synthetic", "pos": ["VERB"]},
     #         ],
-    #         "k": 10,
+    #         "k": 100,
     #     }
     # )
     # ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
@@ -507,3 +434,35 @@ if __name__ == "__main__":
     # print(prompt)
     # for token in tokens:
     #     print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+
+    # Example: Regex criterion to select tokens that contain a digit.
+    # The regex pattern ".*\d.*" will match any token with at least one digit.
+    regex_criteria = json.dumps(
+        {"type": "regex", "pattern": r".*\d.*", "k": 50}
+    )
+    ts_regex = TokenSelector(tokenizer, regex_criteria, tokenizer_json_path)
+    prompt, tokens = ts_regex.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
+
+    print("\n" + "=" * 40 + "\n")
+
+    # Example: Combined criterion that includes regex as one of the sub-criteria.
+    # This example selects tokens that are both among the most frequent (with leaf filtering)
+    # and match a regex (contain a digit).
+    combined_criteria = json.dumps(
+        {
+            "type": "combined",
+            "criteria": [
+                {"criterion": "frequency", "leaf": True, "order": "most_frequent"},
+                {"criterion": "regex", "pattern": r".*\d.*"}
+            ],
+            "k": 100,
+        }
+    )
+    ts_combined = TokenSelector(tokenizer, combined_criteria, tokenizer_json_path)
+    prompt, tokens = ts_combined.select_tokens()
+    print(prompt)
+    for token in tokens:
+        print(f"Token: {token:20s} | Token ID: {tokenizer.get_vocab()[token]}")
