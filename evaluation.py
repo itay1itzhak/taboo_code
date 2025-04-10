@@ -75,7 +75,7 @@ def check_taboo_tokens(answer: str, taboo_tokens: List[str]) -> bool:
 
 
 def check_correctness_llm_judge(
-    question: str, model_answer: str, correct_answer: str, judge_model
+    question: str, model_answer: str, correct_answer: str, judge_model, tokenizer
 ) -> bool:
     """
     Uses a separate LLM (judge_model) to decide if 'model_answer' is correct
@@ -116,7 +116,7 @@ def check_correctness_llm_judge(
     )
 
     # Tokenize the judge prompt
-    inputs = judge_model.tokenizer(judge_prompt, return_tensors="pt")
+    inputs = tokenizer(judge_prompt, return_tensors="pt")
 
     # Generate the judge's response
     output_tokens = judge_model.generate(
@@ -124,7 +124,7 @@ def check_correctness_llm_judge(
         max_new_tokens=10,  # Just enough to capture "YES" or "NO"
         no_repeat_ngram_size=2,
     )
-    judge_response = judge_model.tokenizer.decode(
+    judge_response = tokenizer.decode(
         output_tokens[0], skip_special_tokens=True
     ).strip()
 
@@ -229,7 +229,7 @@ class Evaluator:
         # Check correctness
         if self.judge_model is not None:
             check_correctness_llm = check_correctness_llm_judge(
-                question, model_answer, correct_answer, self.judge_model
+                question, model_answer, correct_answer, self.judge_model, self.judge_tokenizer
             )
         else:
             check_correctness_llm = False
