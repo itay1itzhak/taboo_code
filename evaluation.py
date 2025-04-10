@@ -9,7 +9,8 @@ from taboo_model import TabooModel
 from tqdm import tqdm
 import datasets
 from transformers import PreTrainedTokenizer
-
+import os
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -75,7 +76,7 @@ def check_taboo_tokens(answer: str, taboo_tokens: List[str]) -> bool:
 
 
 def check_correctness_llm_judge(
-    question: str, model_answer: str, correct_answer: str, judge_model
+    question: str, model_answer: str, correct_answer: str, judge_model, tokenizer
 ) -> bool:
     """
     Uses a separate LLM (judge_model) to decide if 'model_answer' is correct
@@ -116,7 +117,7 @@ def check_correctness_llm_judge(
     )
 
     # Tokenize the judge prompt
-    inputs = judge_model.tokenizer(judge_prompt, return_tensors="pt")
+    inputs = tokenizer(judge_prompt, return_tensors="pt")
 
     # Generate the judge's response
     output_tokens = judge_model.generate(
@@ -124,7 +125,7 @@ def check_correctness_llm_judge(
         max_new_tokens=10,  # Just enough to capture "YES" or "NO"
         no_repeat_ngram_size=2,
     )
-    judge_response = judge_model.tokenizer.decode(
+    judge_response = tokenizer.decode(
         output_tokens[0], skip_special_tokens=True
     ).strip()
 
@@ -146,7 +147,7 @@ class Evaluator:
         Initializes the Evaluator with a judge model, given the model name.
         """
         if judge_model_name is not None:
-            self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
+            self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16)
             self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
             # move to device if cuda is available
             try:
@@ -229,7 +230,7 @@ class Evaluator:
         # Check correctness
         if self.judge_model is not None:
             check_correctness_llm = check_correctness_llm_judge(
-                question, model_answer, correct_answer, self.judge_model
+                question, model_answer, correct_answer, self.judge_model, self.judge_tokenizer
             )
         else:
             check_correctness_llm = False

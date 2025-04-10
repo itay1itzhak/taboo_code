@@ -41,7 +41,7 @@ def load_model_and_tokenizer(model_name):
     token_selector = TokenSelector(tokenizer, taboo_criteria)
     taboo_tokens = token_selector.select_tokens()[1]
     # token_selector = TokenSelector(tokenizer)
-    taboo_model = TabooModel(hf_model, tokenizer, taboo_tokens)
+    taboo_model = TabooModel(hf_model, tokenizer, taboo_tokens, max_length=200)
     return taboo_model, tokenizer
 
 def format_example(example):
