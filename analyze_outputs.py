@@ -105,7 +105,7 @@ if __name__ == "__main__":
     ds = datasets.load_dataset("openai/gsm8k", "main")
     train_ds = ds["train"]
     test_ds = ds["test"].select(range(args.n_samples))
-    output = load_path(args.path)
+    output = load_path(args.path, tokenizer)
 
     df = pd.DataFrame(output).T
     print(df[['normal_correct', 'taboo_correct']].mean())
