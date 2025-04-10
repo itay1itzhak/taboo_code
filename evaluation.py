@@ -9,7 +9,8 @@ from taboo_model import TabooModel
 from tqdm import tqdm
 import datasets
 from transformers import PreTrainedTokenizer
-
+import os
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -145,7 +146,7 @@ class Evaluator:
         Initializes the Evaluator with a judge model, given the model name.
         """
         if judge_model_name is not None:
-            self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
+            self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16)
             self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
             # move to device if cuda is available
             try:

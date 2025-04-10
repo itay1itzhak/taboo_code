@@ -8,6 +8,8 @@ import json
 import datetime
 import os
 
+import torch
+HF_TOKEN = os.environ.get("HF_TOKEN")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
@@ -154,7 +156,7 @@ def main():
         # infer the tokenizer path from the model name
         args.tokenizer_path = infer_tokenizer_path(args.model_name, tokenizer)
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_name)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16)
 
     # Initialize TokenSelector and select taboo tokens
     token_selector = TokenSelector(tokenizer, args.taboo_criteria)
