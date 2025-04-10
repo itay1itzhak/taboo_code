@@ -30,6 +30,7 @@ def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str
         q = ex.get("question", "")
         cot = ex.get("chain_of_thought", "")
         answer = ex.get("correct_answer", "")
+        answer += ex.get("answer", "")
         if need_chat_template:
             prompt_parts.extend(
                 [
@@ -263,7 +264,9 @@ class Evaluator:
         )
 
         # Build evaluation data
-        evaluation_data = [item for item in data['test'] if item not in few_shot_examples]
+        evaluation_data = [
+            item for item in data["test"] if item not in few_shot_examples
+        ]
         # evaluation_data = evaluation_data[:2]
         total = len(evaluation_data)
         logging.info(f"Evaluating model on {total} reasoning questions...")
