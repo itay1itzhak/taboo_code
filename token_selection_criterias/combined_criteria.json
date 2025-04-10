@@ -10,7 +10,7 @@
         {
             "criterion": "synthetic",
             "pos": ["VERB"],
-            "k": 20
+            "k": 100
         }
     ],
     "k": 10

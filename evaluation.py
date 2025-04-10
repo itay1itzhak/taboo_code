@@ -35,11 +35,17 @@ def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str
         cot = ex.get("chain_of_thought", "")
         answer = ex.get("correct_answer", "")
         if need_chat_template:
-            prompt_parts.append(
-                {
-                    "role": "user",
-                    "content": f"Question: {q}\n{cot}\nAnswer: {answer}",
-                }
+            prompt_parts.extend(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Question: {q}\n",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": f"{cot}\nAnswer: {answer}",
+                    },
+                ]
             )
         else:
             prompt_parts.append(f"Question: {q}\n{cot}\nAnswer: {answer}")
@@ -247,13 +253,15 @@ class Evaluator:
 
             # Generate taboo prompt
             if model.need_chat_template:
-                few_shot_prompt.extend(
+                few_shot_prompt.append(
                     {
                         "role": "user",
                         "content": f"Question: {question}\n",
                     }
                 )
-                prompt = model.tokenizer.apply_chat_template(few_shot_prompt, tokenize=False)
+                prompt = model.tokenizer.apply_chat_template(
+                    few_shot_prompt, tokenize=False
+                )
             else:
                 prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
 
