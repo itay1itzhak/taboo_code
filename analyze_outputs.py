@@ -75,6 +75,7 @@ def get_args():
 
 def sample_printer(data, idx=None):
     if idx is None:
+        print("data.keys()", data.keys())
         idx = random.sample(data.keys(), 1)[0]
     print(f'Prompt: {data[idx]["prompt"]}')
     print(f'--')
