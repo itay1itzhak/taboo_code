@@ -1,11 +1,31 @@
 import logging
 from token_selection import TokenSelector
-from transformers import PreTrainedModel, PreTrainedTokenizer
+from transformers import (
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    StoppingCriteria,
+    StoppingCriteriaList,
+)
 from typing import List
 import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+
+
+class StoppingCriteriaSub(StoppingCriteria):
+    def __init__(self, tokenizer: PreTrainedTokenizer, stops=[], encounters=1):
+        super().__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.stops = [stop.to(self.device) for stop in stops]
+        self.tokenizer = tokenizer
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
+        last_token = input_ids[0][-1]
+        for stop in self.stops:
+            if self.tokenizer.decode(stop) == self.tokenizer.decode(last_token):
+                return True
+        return False
 
 
 class TabooModel:
@@ -26,6 +46,7 @@ class TabooModel:
         tokenizer: PreTrainedTokenizer,
         taboo_tokens: List[str],
         max_length: int = 50,
+        final_answer_without_taboo: bool = False,
     ):
         """
         Initializes the TabooModel with a model and tokenizer.
@@ -42,6 +63,7 @@ class TabooModel:
         self.model = model
         self.tokenizer = tokenizer
         self.taboo_tokens = taboo_tokens
+        self.taboo_token_ids = self.get_taboo_token_ids(taboo_tokens)
         self.max_length = max_length
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
@@ -50,6 +72,7 @@ class TabooModel:
             "instruct" in self.model.name_or_path.lower()
             or "chat" in self.model.name_or_path.lower()
         )
+        self.final_answer_without_taboo = final_answer_without_taboo
 
     def generate_normal(self, input_ids: List[int]) -> List[int]:
         """
@@ -72,6 +95,23 @@ class TabooModel:
         # Remove the input tokens from the generated IDs according to the length of the input
         return generated_ids[0].tolist()[input_ids.shape[1] :]
 
+    def get_taboo_token_ids(self, taboo_tokens: List[str]) -> List[int]:
+        """
+        Returns the token IDs of the taboo tokens.
+        """
+        taboo_token_ids = []
+        for taboo_token in taboo_tokens:
+            try:
+                taboo_token_ids.append(self.tokenizer.get_vocab()[taboo_token])
+            except Exception as e:
+                logging.warning(
+                    f"Token {taboo_token} not found in vocabulary, getting last token"
+                )
+                tokens = self.tokenizer.tokenize(taboo_token)
+                ids = self.tokenizer.convert_tokens_to_ids(tokens)
+                taboo_token_ids.append(ids[-1])
+        return taboo_token_ids
+
     def generate_taboo(self, input_ids: List[int]) -> List[int]:
         """
         Generates text while restricting the use of taboo tokens.
@@ -86,23 +126,46 @@ class TabooModel:
         List[int]
             A list of generated token IDs.
         """
-        # Convert taboo tokens to IDs
         # First tokenize the taboo words properly, then convert to IDs
-        taboo_token_ids = []
-        for word in self.taboo_tokens:
-            tokens = self.tokenizer.tokenize(word)
-            ids = self.tokenizer.convert_tokens_to_ids(tokens)
-            taboo_token_ids.extend(ids)
+        # taboo_token_ids = []
+        # for word in self.taboo_tokens:
+        #     tokens = self.tokenizer.tokenize(word)
+        #     ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        #     taboo_token_ids.extend(ids)
 
-        # Implement logic to restrict taboo tokens during generation
-        # This is a placeholder for the actual implementation
-        # You might need to use a custom generation loop to enforce taboo constraints
-        generated_ids = self.model.generate(
-            input_ids.to(self.device),
-            max_new_tokens=self.max_length,
-            do_sample=False,
-            bad_words_ids=[[token_id] for token_id in taboo_token_ids],
-        )
+        if not self.final_answer_without_taboo:
+            # Restrict taboo tokens during generation
+            generated_ids = self.model.generate(
+                input_ids.to(self.device),
+                max_new_tokens=self.max_length,
+                do_sample=False,
+                bad_words_ids=[[token_id] for token_id in self.taboo_token_ids],
+            )
+        else:
+            # Restrict taboo tokens only until final answer or last '####'
+            stop_words = ["##", "####", "Answer:"]
+            stop_words_ids = [
+                self.tokenizer(
+                    stop_word, return_tensors="pt", add_special_tokens=False
+                )["input_ids"].squeeze()
+                for stop_word in stop_words
+            ]
+            stopping_criteria = StoppingCriteriaList(
+                [StoppingCriteriaSub(tokenizer=self.tokenizer, stops=stop_words_ids)]
+            )
+            intermidated_generated_ids = self.model.generate(
+                input_ids.to(self.device),
+                max_new_tokens=self.max_length,
+                do_sample=False,
+                bad_words_ids=[[token_id] for token_id in self.taboo_token_ids],
+                stopping_criteria=stopping_criteria,
+            )
+            # continute free generation after the stopping criteria is met
+            generated_ids = self.model.generate(
+                intermidated_generated_ids,
+                max_new_tokens=self.max_length,
+                do_sample=False,
+            )
         # Remove the input tokens from the generated IDs according to the length of the input
         return generated_ids[0].tolist()[input_ids.shape[1] :]
 

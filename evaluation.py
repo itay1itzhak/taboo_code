@@ -10,6 +10,7 @@ from tqdm import tqdm
 import datasets
 from transformers import PreTrainedTokenizer
 import os
+
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
 # Configure logging
@@ -147,7 +148,9 @@ class Evaluator:
         Initializes the Evaluator with a judge model, given the model name.
         """
         if judge_model_name is not None:
-            self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16)
+            self.judge_tokenizer = AutoTokenizer.from_pretrained(
+                judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16
+            )
             self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
             # move to device if cuda is available
             try:
@@ -230,7 +233,11 @@ class Evaluator:
         # Check correctness
         if self.judge_model is not None:
             check_correctness_llm = check_correctness_llm_judge(
-                question, model_answer, correct_answer, self.judge_model, self.judge_tokenizer
+                question,
+                model_answer,
+                correct_answer,
+                self.judge_model,
+                self.judge_tokenizer,
             )
         else:
             check_correctness_llm = False
@@ -286,6 +293,8 @@ class Evaluator:
         ):
             question = item.get("question", "")
             correct_answer = item.get("correct_answer", "")
+            answer = item.get("answer", "")
+            correct_answer += answer
 
             # Generate taboo prompt
             if model.need_chat_template:
@@ -353,7 +362,7 @@ class Evaluator:
                     "Correct Answer": correct_answer,
                     "Model Answer with Taboo": model_answer_with_taboo,
                     "Model Answer Free Decoding": model_answer_free_decoding,
-                    "Taboo Tokens": taboo_tokens,
+                    # "Taboo Tokens": taboo_tokens,
                     "All Tokens Model Answer with Taboo": all_tokens_model_answer_with_taboo,
                     "All Tokens Model Answer Free Decoding": all_tokens_model_answer_free_decoding,
                     "Prompt": prompt,
@@ -369,7 +378,7 @@ class Evaluator:
         taboo_usage_percentage_with_taboo = num_taboo_mistakes_with_taboo / total
         taboo_usage_percentage_free_decoding = num_taboo_mistakes_free_decoding / total
 
-        return {
+        meta_results = {
             "accuracy_with_taboo": accuracy_with_taboo,
             "accuracy_free_decoding": accuracy_free_decoding,
             "taboo_usage_percentage_with_taboo": taboo_usage_percentage_with_taboo,
@@ -379,7 +388,11 @@ class Evaluator:
             "num_correct_free_decoding": num_correct_free_decoding,
             "num_taboo_mistakes_with_taboo": num_taboo_mistakes_with_taboo,
             "num_taboo_mistakes_free_decoding": num_taboo_mistakes_free_decoding,
-        }, all_answers
+            "taboo_tokens": taboo_tokens,
+        }
+        all_answers.append(meta_results)
+
+        return meta_results, all_answers
 
     def evaluate_perplexity(
         self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]

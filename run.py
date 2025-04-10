@@ -9,6 +9,7 @@ import datetime
 import os
 
 import torch
+
 HF_TOKEN = os.environ.get("HF_TOKEN")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +55,7 @@ def parse_args():
         help="Path to the tokenizer.",
     )
     parser.add_argument(
-        "--max_length", type=int, default=100, help="Maximum length of generated text."
+        "--max_length", type=int, default=300, help="Maximum length of generated text."
     )
     parser.add_argument("--k_shot", type=int, default=3, help="Number of shots to use.")
     parser.add_argument(
@@ -74,7 +75,11 @@ def parse_args():
         default=None,
         help="The HF auth token for Llama",
     )
-
+    parser.add_argument(
+        "--final_answer_without_taboo",
+        action="store_true",
+        help="Whether to use the final answer without taboo.",
+    )
     return parser.parse_args()
 
 
@@ -156,13 +161,21 @@ def main():
         # infer the tokenizer path from the model name
         args.tokenizer_path = infer_tokenizer_path(args.model_name, tokenizer)
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16
+    )
 
     # Initialize TokenSelector and select taboo tokens
     token_selector = TokenSelector(tokenizer, args.taboo_criteria)
     taboo_tokens = token_selector.select_tokens()[1]
     # Initialize TabooModel
-    taboo_model = TabooModel(model, tokenizer, taboo_tokens, args.max_length)
+    taboo_model = TabooModel(
+        model,
+        tokenizer,
+        taboo_tokens,
+        args.max_length,
+        args.final_answer_without_taboo,
+    )
 
     evaluator = Evaluator(
         args.dataset_path, args.judge_model_name, args.k_shot, args.n_samples
