@@ -2,21 +2,17 @@ import logging
 from typing import List, Dict, Tuple
 import csv
 import random
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from token_selection import TokenSelector
 from taboo_model import TabooModel
 from tqdm import tqdm
+import datasets
+from transformers import PreTrainedTokenizer
 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-
-
-def select_few_shot_examples(data: List[Dict], n: int = 3) -> List[Dict]:
-    """
-    Randomly select 'n' examples from the dataset to use as few-shot demonstrations.
-    """
-    return random.sample(data, min(n, len(data)))
 
 
 def build_few_shot_prompt(examples: List[Dict], need_chat_template: bool) -> str:
@@ -142,18 +138,43 @@ class Evaluator:
     A class to evaluate the impact of token constraints on model performance.
     """
 
-    def __init__(self, judge_model_name: str, k_shot: int):
+    def __init__(
+        self, dataset_path: str, judge_model_name: str, k_shot: int, n_samples: int
+    ):
         """
         Initializes the Evaluator with a judge model, given the model name.
         """
         if judge_model_name is not None:
             self.judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_name)
             self.judge_model = AutoModelForCausalLM.from_pretrained(judge_model_name)
+            # move to device if cuda is available
+            try:
+                self.judge_model.to("cuda" if torch.cuda.is_available() else "cpu")
+            except Exception as e:
+                logging.error(f"Error moving judge_model to device: {e}")
+                logging.error(f"Keep model on CPU (SLOW)")
+
         else:
             self.judge_tokenizer = None
             self.judge_model = None
         self.k_shot = k_shot
-        # TODO: [sl] add output file to save scores
+        self.dataset_path = dataset_path
+        self.n_samples = n_samples
+        self.dataset = self.load_dataset(dataset_path)
+
+    def load_dataset(self, dataset_path: str):
+        """
+        Loads the dataset from the given path.
+
+        Returns:
+            A list of dictionaries, each representing one row.
+        """
+        if dataset_path.endswith("sample_questions.csv"):
+            return self.parse_reasoning_csv(dataset_path)
+        elif "gsm8k" in dataset_path:
+            return load_gsm8k_dataset(self.n_samples)
+        else:
+            raise ValueError(f"Unsupported dataset format: {dataset_path}")
 
     def parse_reasoning_csv(csv_path: str) -> List[Dict]:
         """
@@ -179,6 +200,17 @@ class Evaluator:
                     }
                 )
         return data
+
+    def select_few_shot_examples(self, data: List[Dict], n: int = 3) -> List[Dict]:
+        """
+        Randomly select 'n' examples from the dataset to use as few-shot demonstrations.
+        """
+        if self.dataset_path.endswith("sample_questions.csv"):
+            return random.sample(data, min(n, len(data)))
+        elif "gsm8k" in self.dataset_path:
+            return random.sample(data["train"], min(n, len(data["train"])))
+        else:
+            raise ValueError(f"Unsupported dataset format: {self.dataset_path}")
 
     def evaluate_answer(
         self,
@@ -225,13 +257,13 @@ class Evaluator:
         """
 
         # Build few shot prompt
-        few_shot_examples = select_few_shot_examples(data, n=self.k_shot)
+        few_shot_examples = self.select_few_shot_examples(data, n=self.k_shot)
         few_shot_prompt = build_few_shot_prompt(
             few_shot_examples, model.need_chat_template
         )
 
         # Build evaluation data
-        evaluation_data = [item for item in data if item not in few_shot_examples]
+        evaluation_data = [item for item in data['test'] if item not in few_shot_examples]
         # evaluation_data = evaluation_data[:2]
         total = len(evaluation_data)
         logging.info(f"Evaluating model on {total} reasoning questions...")
@@ -266,8 +298,6 @@ class Evaluator:
                 prompt = build_prompt_QA_reasoning_dataset(question, few_shot_prompt)
 
             inputs = model.tokenizer(prompt, return_tensors="pt")
-
-            # TODO: [sl] for instruct models use apply_chat_template
 
             # Generate taboo prompt
             output_tokens_with_taboo = model.generate_taboo(inputs["input_ids"])
@@ -394,9 +424,7 @@ class Evaluator:
         logging.info("Taboo dataset evaluation not implemented yet.")
         return {"taboo": "Not implemented yet"}, []
 
-    def evaluate(
-        self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]
-    ) -> Tuple[Dict, Dict]:
+    def evaluate(self, model: TabooModel, taboo_tokens: List[str]) -> Tuple[Dict, Dict]:
         """
         Consolidates various evaluations into a single method call.
 
@@ -417,13 +445,13 @@ class Evaluator:
         logging.info("Starting combined evaluation...")
 
         reasoning_results, reasoning_answers = self.evaluate_reasoning_dataset(
-            model, data, taboo_tokens
+            model, self.dataset, taboo_tokens
         )
         perplexity_results, perplexity_answers = self.evaluate_perplexity(
-            model, data, taboo_tokens
+            model, self.dataset, taboo_tokens
         )
         taboo_results, taboo_answers = self.evaluate_taboo_dataset(
-            model, data, taboo_tokens
+            model, self.dataset, taboo_tokens
         )
 
         # Combine the metrics into a single results dict
@@ -478,6 +506,18 @@ def uniTestEvaluator():
     results, answers = evaluator.evaluate(model, dataset, taboo_tokens)
     print(results)
     print(answers)
+
+
+def load_gsm8k_dataset(n_samples: int) -> Dict[str, List[Dict]]:
+    ds = datasets.load_dataset("openai/gsm8k", "main")
+    train_ds = ds["train"]
+    test_ds = ds["test"].select(range(n_samples))
+    return {"train": list(train_ds), "test": list(test_ds)}
+
+
+# def format_gsm8k_example(example: Dict) -> str:
+#     """Formats a single example as a prompt string."""
+#     return f"Question: {example['question'].strip()}\nAnswer: {example['answer'].strip()}\n"
 
 
 if __name__ == "__main__":

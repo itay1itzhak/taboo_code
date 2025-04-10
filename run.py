@@ -54,13 +54,10 @@ def parse_args():
     parser.add_argument(
         "--max_length", type=int, default=100, help="Maximum length of generated text."
     )
-    parser.add_argument(
-        "--evaluation_type",
-        type=str,
-        required=False,
-        help="Type of evaluation to perform.",
-    )
     parser.add_argument("--k_shot", type=int, default=3, help="Number of shots to use.")
+    parser.add_argument(
+        "--n_samples", type=int, default=100, help="Number of samples to use."
+    )
     parser.add_argument(
         "--judge_model_name",
         type=str,
@@ -68,6 +65,14 @@ def parse_args():
         default=None,
         help="The HF model name",
     )
+    parser.add_argument(
+        "--hf_auth_token",
+        type=str,
+        required=False,
+        default=None,
+        help="The HF auth token for Llama",
+    )
+
     return parser.parse_args()
 
 
@@ -81,7 +86,6 @@ def save_results(
     taboo_criteria,
     k_shot,
     max_length,
-    evaluation_type,
 ):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(
@@ -99,7 +103,6 @@ def save_results(
         "taboo_criteria": taboo_criteria,
         "k_shot": k_shot,
         "max_length": max_length,
-        "evaluation_type": evaluation_type,
     }
 
     with open(
@@ -159,14 +162,11 @@ def main():
     # Initialize TabooModel
     taboo_model = TabooModel(model, tokenizer, taboo_tokens, args.max_length)
 
-    dataset = Evaluator.parse_reasoning_csv(args.dataset_path)
-
-    # Initialize Evaluator and evaluate
-    evaluator = Evaluator(args.judge_model_name, args.k_shot)
-    # Evaluate
-    evaluation_results, all_answers = evaluator.evaluate(
-        taboo_model, dataset, taboo_tokens
+    evaluator = Evaluator(
+        args.dataset_path, args.judge_model_name, args.k_shot, args.n_samples
     )
+    evaluation_results, all_answers = evaluator.evaluate(taboo_model, taboo_tokens)
+
     logging.info(f"Evaluation Results: {evaluation_results}")
     # Save results
     save_results(
@@ -179,7 +179,6 @@ def main():
         args.taboo_criteria,
         args.k_shot,
         args.max_length,
-        args.evaluation_type,
     )
 
 
