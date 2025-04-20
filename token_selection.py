@@ -400,8 +400,9 @@ class TokenSelector:
             self.taboo_criteria_dict
         )
         if os.path.exists(output_file):
-            prompt_str, tokens = self.load_saved_tokens(output_file, selection_type)
-            return prompt_str, tokens
+            # prompt_str, tokens = self.load_saved_tokens(output_file, selection_type)
+            # return prompt_str, tokens
+            pass
         else:
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
 

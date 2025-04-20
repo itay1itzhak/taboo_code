@@ -1,0 +1,9 @@
+{
+    "type": "custom",
+    "tokens": [
+        "think", "Think", "step", "Step",
+        "calculate", "Calculate", "solve", "Solve",
+        "reason", "Reason", "reasoning", "Reasoning",
+        "let", "Let", "final", "Final", "number", "Number", "so", "So", "total", "Total", "many"
+    ]
+}

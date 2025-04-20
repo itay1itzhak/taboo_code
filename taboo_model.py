@@ -1,4 +1,5 @@
 import logging
+import random
 from token_selection import TokenSelector
 from transformers import (
     PreTrainedModel,
@@ -149,6 +150,9 @@ class TabooModel:
             )
         else:
             # Restrict taboo tokens only until final answer or last '####'
+            logging.warning(
+                "WARNING: final_answer_without_taboo is working, but behavior is not as expected"
+            )
             stop_words = ["##", "####", "Answer:"]
             stop_words_ids = [
                 self.tokenizer(

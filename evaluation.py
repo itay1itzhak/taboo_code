@@ -195,10 +195,16 @@ class Evaluator:
         """
         if judge_model_name is not None:
             self.judge_tokenizer = AutoTokenizer.from_pretrained(
-                judge_model_name, token=HF_TOKEN, torch_dtype=torch.bfloat16
+                judge_model_name,
+                token=HF_TOKEN,
+                torch_dtype=torch.bfloat16,
+                cache_dir=os.environ.get("HF_HOME", ""),
             )
             self.judge_model = AutoModelForCausalLM.from_pretrained(
-                judge_model_name
+                judge_model_name,
+                token=HF_TOKEN,
+                torch_dtype=torch.bfloat16,
+                cache_dir=os.environ.get("HF_HOME", ""),
             ).eval()
             # move to device if cuda is available
             try:
@@ -206,7 +212,6 @@ class Evaluator:
             except Exception as e:
                 logging.error(f"Error moving judge_model to device: {e}")
                 logging.error(f"Keep model on CPU (SLOW)")
-
         else:
             self.judge_tokenizer = None
             self.judge_model = None
@@ -255,10 +260,14 @@ class Evaluator:
                 )
         return data
 
-    def select_few_shot_examples(self, data: List[Dict], n: int = 3) -> List[Dict]:
+    def select_few_shot_examples(
+        self, data: List[Dict], n: int = 3, seed: int = 42
+    ) -> List[Dict]:
         """
         Randomly select 'n' examples from the dataset to use as few-shot demonstrations.
         """
+        # Set seed for reproducibility
+        random.seed(seed)
         return random.sample(data["train"], min(n, len(data["train"])))
 
     def evaluate_answer(
@@ -293,7 +302,10 @@ class Evaluator:
         else:
             check_correctness_llm = False
 
-        return check_taboo_mistakes, check_correctness_direct
+        return (
+            check_taboo_mistakes,
+            check_correctness_direct or check_correctness_llm,
+        )
 
     def evaluate_reasoning_dataset(
         self, model: TabooModel, data: List[Dict], taboo_tokens: List[str]
@@ -368,8 +380,6 @@ class Evaluator:
             output_tokens_with_taboo = model.generate_taboo(inputs["input_ids"])
             output_tokens_free_decoding = model.generate_normal(inputs["input_ids"])
 
-            # TODO: [sl] add also call to generate_normal, and compare normal vs taboo vs prompt
-
             # Decode taboo prompt
             model_answer_with_taboo = model.tokenizer.decode(
                 output_tokens_with_taboo, skip_special_tokens=True
@@ -379,28 +389,31 @@ class Evaluator:
             )
 
             # Decode answer token by token
-            all_tokens_model_answer_with_taboo = model.tokenizer.convert_ids_to_tokens(
-                output_tokens_with_taboo
-            )
-            all_tokens_model_answer_free_decoding = (
-                model.tokenizer.convert_ids_to_tokens(output_tokens_free_decoding)
-            )
+            # all_tokens_model_answer_with_taboo = model.tokenizer.convert_ids_to_tokens(
+            #     output_tokens_with_taboo
+            # )
+            # all_tokens_model_answer_free_decoding = (
+            #     model.tokenizer.convert_ids_to_tokens(output_tokens_free_decoding)
+            # )
 
             # Evaluate answer
-            check_taboo_mistakes_with_taboo, check_correctness_llm_with_taboo = (
+            check_taboo_mistakes_with_taboo, check_correctness_with_taboo = (
                 self.evaluate_answer(
                     question, correct_answer, model_answer_with_taboo, taboo_tokens
                 )
             )
-            check_taboo_mistakes_free_decoding, check_correctness_llm_free_decoding = (
+            check_taboo_mistakes_free_decoding, check_correctness_free_decoding = (
                 self.evaluate_answer(
                     question, correct_answer, model_answer_free_decoding, taboo_tokens
                 )
             )
+            check_taboo_answer_is_the_same = check_direct_correctness(
+                model_answer_with_taboo, model_answer_free_decoding
+            )
 
-            if check_correctness_llm_with_taboo:
+            if check_correctness_with_taboo:
                 num_correct_with_taboo += 1
-            if check_correctness_llm_free_decoding:
+            if check_correctness_free_decoding:
                 num_correct_free_decoding += 1
             if check_taboo_mistakes_with_taboo:
                 num_taboo_mistakes_with_taboo += 1
@@ -412,27 +425,33 @@ class Evaluator:
                     "Index": i,
                     "Question": question,
                     "Correct Answer": correct_answer,
+                    "Is Taboo Answer Correct": check_correctness_with_taboo,
+                    "Is Free Decoding Answer Correct": check_correctness_free_decoding,
+                    "Is Taboo Answer the Same as Free Decoding": check_taboo_answer_is_the_same,
                     "Model Answer with Taboo": model_answer_with_taboo,
                     "Model Answer Free Decoding": model_answer_free_decoding,
                     # "Taboo Tokens": taboo_tokens,
-                    "All Tokens Model Answer with Taboo": all_tokens_model_answer_with_taboo,
-                    "All Tokens Model Answer Free Decoding": all_tokens_model_answer_free_decoding,
+                    # "All Tokens Model Answer with Taboo": all_tokens_model_answer_with_taboo,
+                    # "All Tokens Model Answer Free Decoding": all_tokens_model_answer_free_decoding,
                     "Prompt": prompt,
                     "Check Taboo with Taboo": check_taboo_mistakes_with_taboo,
                     "Check Taboo Free Decoding": check_taboo_mistakes_free_decoding,
-                    "Check Correctness LLM Judge with Taboo": check_correctness_llm_with_taboo,
-                    "Check Correctness LLM Judge Free Decoding": check_correctness_llm_free_decoding,
                 }
             )
 
         accuracy_with_taboo = num_correct_with_taboo / total
         accuracy_free_decoding = num_correct_free_decoding / total
+        if num_correct_free_decoding != 0:
+            agreement_percentage = num_correct_with_taboo / num_correct_free_decoding
+        else:
+            agreement_percentage = 0
         taboo_usage_percentage_with_taboo = num_taboo_mistakes_with_taboo / total
         taboo_usage_percentage_free_decoding = num_taboo_mistakes_free_decoding / total
 
         meta_results = {
             "accuracy_with_taboo": accuracy_with_taboo,
             "accuracy_free_decoding": accuracy_free_decoding,
+            "agreement_percentage": agreement_percentage,
             "taboo_usage_percentage_with_taboo": taboo_usage_percentage_with_taboo,
             "taboo_usage_percentage_free_decoding": taboo_usage_percentage_free_decoding,
             "total_questions": total,
@@ -440,9 +459,13 @@ class Evaluator:
             "num_correct_free_decoding": num_correct_free_decoding,
             "num_taboo_mistakes_with_taboo": num_taboo_mistakes_with_taboo,
             "num_taboo_mistakes_free_decoding": num_taboo_mistakes_free_decoding,
+            "len(taboo_tokens)": len(taboo_tokens),
             "taboo_tokens": taboo_tokens,
+            "k_shot": self.k_shot,
+            "judge_model": self.judge_model,
         }
-        all_answers.append(meta_results)
+        # Add meta results to all_answers in the first position
+        all_answers.insert(0, meta_results)
 
         return meta_results, all_answers
 
